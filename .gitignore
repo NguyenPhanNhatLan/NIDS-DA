@@ -1,0 +1,58 @@
+# Biến môi trường và thông tin riêng tư
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Môi trường Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Cache kiểm thử và công cụ
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Notebook: giữ file .ipynb, bỏ checkpoint tự động
+.ipynb_checkpoints/
+
+# Dữ liệu và kết quả sinh ra
+/data/
+/results/
+/reports/
+/artifacts/
+
+# Model đã train; vẫn giữ code Python trong models/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.joblib
+*.pkl
+/models/*/
+
+# Spark và log
+spark-warehouse/
+metastore_db/
+derby.log
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# File tạm và hệ điều hành
+.codex-tmp/
+.DS_Store
+._*
+Thumbs.db
+*.swp
+*.swo
+*~

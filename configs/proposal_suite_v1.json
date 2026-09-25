@@ -1,0 +1,15 @@
+{
+  "protocol": "UDA main comparison + separately budgeted target-label fine-tuning",
+  "uda_methods": ["source_only", "coral", "mmd", "mk_mmd", "class_aware_mmd"],
+  "uda_selection": "source validation only",
+  "preprocessing": "source-fit median imputation, signed log1p, RobustScaler",
+  "features": "all 16 COMMON_FEATURES, identical across directions and methods",
+  "seeds": [42, 43, 44, 45, 46],
+  "label_fractions": [0.01, 0.05, 0.1],
+  "label_budget_denominator": "unique target training feature vectors",
+  "target_validation_within_budget": 0.2,
+  "fewshot_methods": ["target_labels_only", "fine_tune", "fine_tune_mmd"],
+  "fine_tune_source_replay_weight": 0.25,
+  "fine_tune_mmd_lambda": 0.01,
+  "status": "Design reference; executable defaults live in experiments.proposal_suite and models.fine_tuning"
+}

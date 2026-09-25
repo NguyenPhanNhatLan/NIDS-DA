@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kltn-data-processing"
+version = "0.1.0"
+description = "Cross-domain NIDS preprocessing, baselines, and MMD experiments."
+requires-python = ">=3.11"
+dependencies = [
+    "joblib",
+    "matplotlib",
+    "numpy",
+    "optuna",
+    "pandas",
+    "pyarrow",
+    "scipy",
+    "scikit-learn",
+    "torch",
+]
+
+[project.scripts]
+process-unsw = "data_processing.process_data_unsw:main"
+process-cicids = "data_processing.process_data_cicids:main"
+create-stratified-samples = "data_processing.create_stratified_samples:main"
+validate-mapped-data = "data_processing.validate_mapped_data:main"
+summarize-mapped-data = "data_processing.validate_mapped_data:main"
+source-only-baseline = "experiments.quick_baselines:main"
+train-baseline-model = "models.baseline:main"
+tune-mlp = "models.tuning:main"
+split-data = "training.data_split:main"
+prepare-features = "features.train_features:main"
+evaluate-source-only = "experiments.source_only_transfer:main"
+evaluate-mmd-adaptation = "experiments.mmd_adaptation:main"
+plot-mmd-results = "reporting.mmd_results:main"
+
+evaluate-improved-mmd = "experiments.improved_mmd:main"
+
+evaluate-proposal-suite = "experiments.proposal_suite:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
