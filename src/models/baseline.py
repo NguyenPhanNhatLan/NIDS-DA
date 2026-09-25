@@ -20,13 +20,15 @@ class BaselineMLP(nn.Module):
             nn.Linear(32,2)
         )
         
-    def forward(self,x):
+    def encode_hidden(self, x):
+        """Trả về biểu diễn 256D ngay trước tầng fc2 dùng chung."""
         x = self.fc1(x)
         x = self.bn1(x)
-       
         x = F.relu(x)
-        x = self.dropout(x)
-        
+        return self.dropout(x)
+
+    def forward(self,x):
+        x = self.encode_hidden(x)
         x = self.fc2(x)
         features = self.bn2(x)
         features = F.relu(features)
