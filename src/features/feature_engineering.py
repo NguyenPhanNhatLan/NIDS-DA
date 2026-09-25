@@ -46,7 +46,160 @@ FEATURE_DIR = PROJECT_DIR / "data" / "features"
 
 UNSW_CAT_COLS = ["proto", "service", "state"]
 
+def prepare_dataset(dataset):
+    spark = get_spark()
 
+    try:
+        split_dir = (
+            PROJECT_DIR
+            / "data"
+            / "splits"
+        )
+
+        train_df = spark.read.parquet(
+            str(
+                split_dir
+                / f"{dataset}_train"
+            )
+        )
+
+        val_df = spark.read.parquet(
+            str(
+                split_dir
+                / f"{dataset}_val"
+            )
+        )
+
+        test_df = spark.read.parquet(
+            str(
+                split_dir
+                / f"{dataset}_test"
+            )
+        )
+
+        # -----------------------------
+        # Validate labels
+        # -----------------------------
+
+        rows = (
+            train_df
+            .groupBy("label")
+            .count()
+            .collect()
+        )
+
+        counts = {}
+
+        for row in rows:
+            label = row["label"]
+
+            if label not in (0, 1):
+                raise ValueError(
+                    f"Invalid label: {label}"
+                )
+
+            counts[int(label)] = int(
+                row["count"]
+            )
+
+        if set(counts) != {0, 1}:
+            raise ValueError(
+                f"Need both classes: {counts}"
+            )
+
+        # -----------------------------
+        # Preprocessing
+        # -----------------------------
+
+        if dataset == "unsw":
+            (
+                train_features,
+                val_features,
+                test_features,
+            ) = unsw_featuring(
+                train_df,
+                val_df,
+                test_df,
+            )
+
+        elif dataset == "cicids":
+            (
+                train_features,
+                val_features,
+                test_features,
+            ) = cicids_featuring(
+                train_df,
+                val_df,
+                test_df,
+            )
+
+        else:
+            raise ValueError(dataset)
+
+        first_row = train_features.first()
+
+        input_dim = len(
+            first_row["features"]
+        )
+
+        # -----------------------------
+        # Save features
+        # -----------------------------
+
+        FEATURE_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        export_features(
+            train_features,
+            str(
+                FEATURE_DIR
+                / f"{dataset}_train"
+            ),
+        )
+
+        export_features(
+            val_features,
+            str(
+                FEATURE_DIR
+                / f"{dataset}_val"
+            ),
+        )
+
+        export_features(
+            test_features,
+            str(
+                FEATURE_DIR
+                / f"{dataset}_test"
+            ),
+        )
+
+        metadata = {
+            "dataset": dataset,
+            "class_counts": counts,
+            "input_dim": input_dim,
+        }
+
+        # Ghi vào file tạm rồi đổi tên sau khi JSON đã ghi xong.
+        metadata_path = FEATURE_DIR / f"{dataset}_metadata.json"
+        temporary_path = FEATURE_DIR / f"{dataset}_metadata.json.tmp"
+        try:
+            with temporary_path.open("w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+            temporary_path.replace(metadata_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+        print(
+            f"{dataset}: "
+            f"input_dim={input_dim}"
+        )
+
+    finally:
+        spark.stop()
+        
+        
 def featuring(numeric_cols, cat_cols, log_cols):
     stages = [
         Imputer(
@@ -154,65 +307,90 @@ def unsw_featuring(train_df: DataFrame, val_df: DataFrame, test_df: DataFrame):
     processor.write().overwrite().save(str(PROJECT_DIR / "models" / "unsw_feature_pipeline"))
     return train_features, val_features, test_features
 
-def cicids_featuring(train_df, val_df, test_df):
-    excluded = {"label", "binary_label", "label_clean"}
+def cicids_featuring(
+    train_df,
+    val_df,
+    test_df,
+):
+    excluded = {
+        "label",
+        "binary_label",
+        "label_clean",
+        "attack_cat",
+        "id",
+    }
 
     numeric_cols = [
         field.name
         for field in train_df.schema.fields
         if isinstance(field.dataType, NumericType)
         and field.name.lower() not in excluded
-        and field.name not in UNSW_CAT_COLS
     ]
 
-    log_cols = [c for c in UNSW_LOG_CANDIDATES if c in numeric_cols]
+    if not numeric_cols:
+        raise ValueError(
+            "CICIDS không có numeric features."
+        )
+
+    log_cols = ['total_length_of_fwd_packets', 'total_fwd_packets', 'active_min', 'active_std', 'active_mean', 'active_max', 'bwd_packets_s', 'fwd_packet_length_min', 'down_up_ratio', 'min_packet_length', 'idle_std', 'bwd_iat_min', 'fwd_packet_length_max', 'fwd_packet_length_mean', 'bwd_iat_mean', 'fwd_iat_mean', 'bwd_iat_std', 'packet_length_variance', 'bwd_packet_length_min', 'bwd_iat_max', 'flow_iat_std', 'fwd_iat_std', 'bwd_packet_length_max', 'bwd_iat_total', 'max_packet_length', 'packet_length_mean']
 
     pipeline = featuring(
-        numeric_cols=numeric_cols, cat_cols=UNSW_CAT_COLS, log_cols=log_cols
+        numeric_cols=numeric_cols,
+        cat_cols=[],
+        log_cols=log_cols,
     )
+
+    # Fit CHỈ trên CICIDS train.
     processor = pipeline.fit(train_df)
 
-    train_features = processor.transform(train_df).select("features", "label")
-    val_features = processor.transform(val_df).select("features", "label")
-    test_features = processor.transform(test_df).select("features", "label")
+    train_features = (
+        processor
+        .transform(train_df)
+        .select("features", "label")
+    )
 
-    processor.write().overwrite().save(str(PROJECT_DIR / "models" / "unsw_feature_pipeline"))
-    return train_features, val_features, test_features
+    val_features = (
+        processor
+        .transform(val_df)
+        .select("features", "label")
+    )
+
+    test_features = (
+        processor
+        .transform(test_df)
+        .select("features", "label")
+    )
+
+    processor.write().overwrite().save(
+        str(
+            PROJECT_DIR
+            / "models"
+            / "cicids_feature_pipeline"
+        )
+    )
+
+    return (
+        train_features,
+        val_features,
+        test_features,
+    )
 
 def main():
-    spark = get_spark()
-    try:
-        split_dir = PROJECT_DIR / "data" / "splits"
-        train_df = spark.read.parquet(str(split_dir / "unsw_train"))
-        val_df = spark.read.parquet(str(split_dir / "unsw_val"))
-        test_df = spark.read.parquet(str(split_dir / "unsw_test"))
-        rows = train_df.groupBy("label").count().collect()
-        if any(row["label"] is None or row["label"] not in (0, 1) for row in rows):
-            raise ValueError("Training labels must be 0 or 1 and cannot be null.")
-        counts = {}
-        for row in rows:
-            label = int(row["label"])
-            counts[label] = int(row["count"])
-        if set(counts) != {0, 1}:
-            raise ValueError(f"Training must contain both classes: {counts}")
+    import argparse
 
-        train_features, val_features, test_features = unsw_featuring(
-            train_df, val_df, test_df
-        )
-        first_row = train_features.first()
-        input_dim = len(first_row["features"])
+    parser = argparse.ArgumentParser()
 
-        export_features(train_features, str(FEATURE_DIR / "unsw_train"))
-        export_features(val_features, str(FEATURE_DIR / "unsw_val"))
-        export_features(test_features, str(FEATURE_DIR / "unsw_test"))
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        choices=["unsw", "cicids"],
+    )
 
-        # Training đọc metadata để biết số chiều đầu vào và trọng số các lớp.
-        FEATURE_DIR.mkdir(parents=True, exist_ok=True)
-        with (FEATURE_DIR / "metadata.json").open("w", encoding="utf-8") as f:
-            json.dump({"class_counts": counts, "input_dim": input_dim}, f, indent=2)
-        print(f"Exported features and metadata to {FEATURE_DIR}")
-    finally:
-        spark.stop()
+    args = parser.parse_args()
+
+    prepare_dataset(
+        args.dataset
+    )
 
 
 if __name__ == "__main__":
