@@ -12,7 +12,6 @@ class TargetAdapter(nn.Module):
             nn.Linear(input_dim, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.3),
         )
 
     def forward(self, x):
