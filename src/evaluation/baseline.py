@@ -121,8 +121,8 @@ def collect_scores(
             all_scores
         ),
     )
-    
-    
+
+
 def select_f1_threshold(
     labels,
     scores,
@@ -160,8 +160,8 @@ def select_f1_threshold(
     return float(
         thresholds[best_index]
     )
-    
-    
+
+
 def compute_metrics(
     labels,
     scores,
@@ -234,8 +234,8 @@ def compute_metrics(
         "fn": int(fn),
         "tp": int(tp),
     }
-    
-    
+
+
 def evaluate_ap(
     model,
     loader,

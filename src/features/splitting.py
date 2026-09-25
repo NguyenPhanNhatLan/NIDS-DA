@@ -11,7 +11,20 @@ SEED = 42
 
 
 def split_data(df: DataFrame, seed: int = SEED):
-    return df.randomSplit([0.70, 0.15, 0.15], seed=seed)
+    """Chia cố định 70/15/15 theo features; bản ghi trùng không qua hai tập."""
+    feature_columns = [name for name in df.columns if name != "label"]
+    if not feature_columns:
+        raise ValueError("Không có features để tạo split cố định.")
+
+    # Hash chỉ dùng đầu vào, không dùng nhãn. Cùng features luôn vào cùng tập.
+    bucket = F.pmod(
+        F.xxhash64(*[F.col(name) for name in feature_columns], F.lit(seed)),
+        F.lit(100),
+    )
+    train_df = df.filter(bucket < 70)
+    val_df = df.filter((bucket >= 70) & (bucket < 85))
+    test_df = df.filter(bucket >= 85)
+    return train_df, val_df, test_df
 
 
 def main():

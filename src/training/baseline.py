@@ -142,7 +142,6 @@ def set_seed(seed):
 
 
 def evaluate_f1(model, val_loader, device):
-    """Tính F1 của lớp tấn công (label = 1) trên toàn bộ tập validation."""
     model.eval()
     true_positives = 0
     false_positives = 0
@@ -166,7 +165,6 @@ def evaluate_f1(model, val_loader, device):
 
 
 class ParquetRows(IterableDataset):
-    """Đọc tối đa 8192 dòng mỗi lần, sau đó đưa từng dòng cho DataLoader."""
 
     def __init__(self, path, input_dim, training=False):
         self.files = sorted(Path(path).glob("*.parquet"))
@@ -216,7 +214,6 @@ def make_loader(path, input_dim, batch_size=256, training=False):
         dataset,
         batch_size=batch_size,
         num_workers=0,
-        # Bỏ batch cuối chưa đủ kích thước khi train để tránh BatchNorm nhận 1 mẫu.
         drop_last=training,
     )
 
