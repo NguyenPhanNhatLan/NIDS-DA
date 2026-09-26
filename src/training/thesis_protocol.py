@@ -7,6 +7,15 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
+def resolve_source_seed(protocol, source_seed=None):
+    fixed = int(protocol["source_pretraining_seed"]) if protocol else 42
+    if source_seed is not None:
+        if protocol and source_seed != fixed:
+            raise ValueError(f"Protocol cố định source seed={fixed}, nhận {source_seed}.")
+        return source_seed
+    return fixed
+
+
 def resolve_path(value):
     path = Path(value)
     return path if path.is_absolute() else PROJECT_DIR / path

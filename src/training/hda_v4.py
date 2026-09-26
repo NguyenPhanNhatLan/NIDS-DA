@@ -182,7 +182,8 @@ def train_hda_v4(source_model, teacher, source_loader, target_loader,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--adaptation-seed", "--seed", dest="seed", type=int, default=42)
+    parser.add_argument("--source-seed", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--class-batch-size", type=int, default=64)
@@ -208,9 +209,11 @@ def main():
         target_train_path = resolve_path(protocol["target_data"]["adaptation_train"])
         target_metadata_path = resolve_path(protocol["target_data"]["metadata"])
         checkpoint_dir = resolve_path(protocol["checkpoint_dir"])
+    from training.thesis_protocol import resolve_source_seed
+    source_seed = resolve_source_seed(protocol, args.source_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else
                           "mps" if torch.backends.mps.is_available() else "cpu")
-    source_path = MODEL_DIR / "baselines" / f"unsw_seed{args.seed}.pt"
+    source_path = MODEL_DIR / "baselines" / f"unsw_seed{source_seed}.pt"
     teacher_path = checkpoint_dir / f"unsw_to_cicids_mmd_v2_seed{args.seed}.pt"
     source_checkpoint = torch.load(source_path, map_location="cpu", weights_only=True)
     teacher_checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
@@ -222,6 +225,9 @@ def main():
     target_dim = int(teacher_checkpoint["target_dim"])
     if int(teacher_checkpoint["source_dim"]) != source_dim or int(teacher_checkpoint["seed"]) != args.seed:
         raise ValueError("Teacher không khớp source dimension/seed.")
+    teacher_source_seed = int(teacher_checkpoint.get("source_seed", teacher_checkpoint["seed"]))
+    if teacher_source_seed != source_seed:
+        raise ValueError("Teacher v2 không dùng cùng source-pretraining seed.")
     for domain, dimension in (("unsw", source_dim), ("cicids", target_dim)):
         metadata_path = target_metadata_path if domain == "cicids" else FEATURE_DIR / "unsw_metadata.json"
         metadata = json.loads(metadata_path.read_text())
@@ -253,6 +259,7 @@ def main():
         "method": "hda_fixed_v2_teacher_conditional_mmd", "version": "v4",
         "alignment_space": "hidden_256+conditional_latent_168",
         "seed": args.seed, "source_dim": source_dim, "target_dim": target_dim,
+        "adaptation_seed": args.seed, "source_seed": source_seed,
         "latent_dim": 168, "target_labels_used": False,
         "source_checkpoint": str(source_path), "teacher_checkpoint": str(teacher_path),
         "pseudo_label_metadata": pseudo_metadata, "lambda_conditional": args.lambda_conditional,

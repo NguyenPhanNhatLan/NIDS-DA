@@ -231,7 +231,8 @@ def train_shared_hda(
 
 
 def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
-                 alignment_space="latent", lambda_latent=None, protocol_path=None):
+                 alignment_space="latent", lambda_latent=None, protocol_path=None,
+                 source_seed=None):
     if batch_size < 2 or epochs < 1 or lr <= 0:
         raise ValueError("batch-size >= 2, epochs >= 1 và lr > 0 là bắt buộc")
     if alignment_space not in ("latent", "hidden", "dual"):
@@ -251,13 +252,15 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
         target_train_path = resolve_path(protocol["target_data"]["adaptation_train"])
         target_metadata_path = resolve_path(protocol["target_data"]["metadata"])
         output_dir = resolve_path(protocol["checkpoint_dir"])
+    from training.thesis_protocol import resolve_source_seed
+    source_seed = resolve_source_seed(protocol, source_seed)
 
     with (FEATURE_DIR / "unsw_metadata.json").open(encoding="utf-8") as file:
         source_dim = int(json.load(file)["input_dim"])
     with target_metadata_path.open(encoding="utf-8") as file:
         target_dim = int(json.load(file)["input_dim"])
 
-    checkpoint_path = MODEL_DIR / "baselines" / f"unsw_seed{seed}.pt"
+    checkpoint_path = MODEL_DIR / "baselines" / f"unsw_seed{source_seed}.pt"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     if int(checkpoint["input_dim"]) != source_dim:
         raise ValueError("UNSW checkpoint không khớp metadata.")
@@ -271,7 +274,7 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
         device = torch.device("cpu")
     source_model.to(device)
     print(f"Source {source_dim} -> 256 -> 168 | Target {target_dim} -> 256 -> 168")
-    print(f"Device: {device} | seed: {seed} | MMD: {alignment_space}")
+    print(f"Device: {device} | source seed: {source_seed} | adaptation seed: {seed} | MMD: {alignment_space}")
 
     source_loader = make_loader(
         FEATURE_DIR / "unsw_train", source_dim, batch_size, training=True
@@ -304,6 +307,8 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
                  "v3": "hidden_256+latent_168"}[version]
             ),
             "seed": seed,
+            "adaptation_seed": seed,
+            "source_seed": source_seed,
             "source_dim": source_dim,
             "target_dim": target_dim,
             "latent_dim": 168,

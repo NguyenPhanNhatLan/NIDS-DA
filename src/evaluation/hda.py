@@ -384,7 +384,7 @@ def diagnose_hidden(source_model, target_model, source_loader, target_loader):
 
 
 def compare_v2_v4(source_model, student, source_loader, target_loader, seed,
-                  checkpoint_dir=None):
+                  checkpoint_dir=None, source_seed=None):
     """Test labels only: compare ranking and latent geometry after training."""
     if checkpoint_dir is None:
         checkpoint_dir = MODEL_DIR / "hda"
@@ -392,6 +392,8 @@ def compare_v2_v4(source_model, student, source_loader, target_loader, seed,
     checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
     if checkpoint.get("method") != "hda_shared_semantic_hidden_mmd":
         raise ValueError("Comparison cần đúng teacher v2.")
+    if source_seed is not None and int(checkpoint.get("source_seed", checkpoint.get("seed", seed))) != source_seed:
+        raise ValueError("Comparison teacher v2 không khớp source seed.")
     teacher = HDAV1Model(student.adapter.input_dim, source_model).to(
         next(source_model.parameters()).device
     )
@@ -438,10 +440,11 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--seed",
+        "--adaptation-seed", "--seed", dest="seed",
         type=int,
         default=42,
     )
+    parser.add_argument("--source-seed", type=int, default=None)
     parser.add_argument(
         "--version",
         choices=["v0", "v1", "v2", "v3", "v4"],
@@ -472,6 +475,23 @@ def main():
     elif args.phase == "final":
         raise ValueError("Final evaluation yêu cầu --protocol với holdout đã xác nhận.")
 
+    if args.version in ("v1", "v2", "v3", "v4"):
+        checkpoint_name = f"unsw_to_cicids_mmd_{args.version}_seed{seed}.pt"
+    else:
+        checkpoint_name = f"unsw_to_cicids_mmd_seed{seed}.pt"
+    hda_checkpoint_path = checkpoint_dir / checkpoint_name
+    hda_checkpoint = torch.load(hda_checkpoint_path, map_location="cpu", weights_only=False)
+    if protocol is not None and hda_checkpoint.get("protocol_sha256") != protocol_hash:
+        raise ValueError("Checkpoint chưa được retrain theo cùng frozen protocol.")
+    stored_source_seed = int(hda_checkpoint.get("source_seed", hda_checkpoint.get("seed", seed)))
+    if protocol is not None:
+        from training.thesis_protocol import resolve_source_seed
+        source_seed = resolve_source_seed(protocol, args.source_seed)
+    else:
+        source_seed = stored_source_seed if args.source_seed is None else args.source_seed
+    if source_seed != stored_source_seed:
+        raise ValueError("Source seed không khớp metadata của HDA checkpoint.")
+
     # ======================================================
     # Load source checkpoint
     # ======================================================
@@ -479,7 +499,7 @@ def main():
     source_checkpoint_path = (
         MODEL_DIR
         / "baselines"
-        / f"unsw_seed{seed}.pt"
+        / f"unsw_seed{source_seed}.pt"
     )
 
     source_checkpoint = torch.load(
@@ -510,18 +530,6 @@ def main():
     # Load HDA target encoder
     # ======================================================
 
-    if args.version in ("v1", "v2", "v3", "v4"):
-        checkpoint_name = f"unsw_to_cicids_mmd_{args.version}_seed{seed}.pt"
-    else:
-        checkpoint_name = f"unsw_to_cicids_mmd_seed{seed}.pt"
-    hda_checkpoint_path = checkpoint_dir / checkpoint_name
-    hda_checkpoint = torch.load(
-        hda_checkpoint_path,
-        map_location="cpu",
-        weights_only=False,
-    )
-    if protocol is not None and hda_checkpoint.get("protocol_sha256") != protocol_hash:
-        raise ValueError("Checkpoint chưa được retrain theo cùng frozen protocol.")
     target_dim = int(hda_checkpoint["target_dim"])
     if int(hda_checkpoint.get("source_dim", source_dim)) != source_dim:
         raise ValueError("HDA checkpoint không khớp source checkpoint.")
@@ -581,7 +589,7 @@ def main():
         diagnose_hidden(source_model, target_model, source_loader, test_loader)
     if args.version == "v4":
         compare_v2_v4(source_model, target_model, source_loader, test_loader, seed,
-                     checkpoint_dir=checkpoint_dir)
+                     checkpoint_dir=checkpoint_dir, source_seed=source_seed)
     
     print("\n--- SCORE DIAGNOSTICS ---")
 
@@ -628,7 +636,7 @@ def main():
         PROJECT_DIR
         / "results"
         / "baseline"
-        / f"unsw_seed{seed}.json"
+        / f"unsw_seed{source_seed}.json"
     )
 
     with source_result_path.open(
@@ -679,6 +687,8 @@ def main():
 
         "seed":
             seed,
+        "adaptation_seed": seed,
+        "source_seed": source_seed,
 
         "version": args.version,
         "alignment_space": hda_checkpoint.get("alignment_space", "latent_168"),

@@ -14,7 +14,8 @@ def train_hda_v2(source_model, source_loader, target_loader, target_dim, epochs,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--adaptation-seed", "--seed", dest="seed", type=int, default=42)
+    parser.add_argument("--source-seed", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -23,6 +24,7 @@ def main():
     run_training(
         seed=args.seed, epochs=args.epochs, batch_size=args.batch_size,
         lr=args.lr, alignment_space="hidden", protocol_path=args.protocol,
+        source_seed=args.source_seed,
     )
 
 

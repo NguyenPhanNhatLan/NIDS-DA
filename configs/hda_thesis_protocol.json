@@ -1,5 +1,5 @@
 {
-  "protocol_id": "hda_thesis_v1",
+  "protocol_id": "hda_thesis_v2_fixed_source",
   "architecture_frozen": true,
   "development_seeds": [
     42,
@@ -30,7 +30,7 @@
     "checkpoint_selection": "last epoch; no target-label selection"
   },
   "pseudo_labels": {
-    "teacher": "same-seed HDA v2, frozen, eval mode",
+    "teacher": "same-adaptation-seed HDA v2 using fixed UNSW source seed 42, frozen, eval mode",
     "threshold_data": "all adaptation train features only",
     "score": "attack logit minus normal logit",
     "normal_quantile": 0.02,
@@ -49,9 +49,9 @@
     "holdout_provenance": "Pending: previously inspected test is development; do not relabel it final.",
     "preprocessing": "Existing CICIDS pipeline fitted on adaptation train only; transform dev/final without refit."
   },
-  "checkpoint_dir": "models/thesis/hda_thesis_v1/hda",
-  "result_dir": "results/thesis/hda_thesis_v1",
-  "decision_threshold": "same-seed UNSW validation threshold, no target-label optimization",
+  "checkpoint_dir": "models/thesis/hda_thesis_v2_fixed_source/hda",
+  "result_dir": "results/thesis/hda_thesis_v2_fixed_source",
+  "decision_threshold": "fixed UNSW seed42 validation threshold for every adaptation seed; no target-label optimization",
   "metrics": [
     "pr_auc",
     "roc_auc",
@@ -59,18 +59,19 @@
     "recall",
     "fpr"
   ],
-  "aggregation": "mean and sample standard deviation (ddof=1) over the same fixed final split",
+  "aggregation": "mean and sample standard deviation (ddof=1) across adaptation seeds; fixed source checkpoint and fixed development split; exploratory/internal evaluation",
   "code_sha256": {
     "src/models/baseline.py": "5053c25559896e416dd1c579d80b3311a1c9a01d683a70c3fcfa430fd5cc6234",
     "src/models/hda_v1.py": "4bcb529be8b4c22e1ef9122a5935e3168f4438e28145c751d79dccf5e2cc0264",
     "src/training/adaptation.py": "065f8a36156038a7d161b7322d33ddba963e21b140ed3fdaad264e5729f94184",
-    "src/training/hda_shared.py": "48ca10c54e5beba7ecfffc4e44fb4f1dae67bff97c85c3c77af7c632ee990b30",
-    "src/training/hda_v2.py": "d39efd69b9b3fdca6d792504634fd4b438412789ccf8191c7d9fff40a4a4f18a",
-    "src/training/hda_v4.py": "5887e7a121619996e414c403927306d6116b253c96b657c3059857dbbd4b871f",
+    "src/training/hda_shared.py": "eec6a905415675a3f885d3472a0a5fc30e21df346c3a807432d3a6c5fc1c6fcb",
+    "src/training/hda_v2.py": "1fa6abfb4b400ae6d67e93f8213e42038758d4cf0aca0bb38ff3c1ab3dcf36ec",
+    "src/training/hda_v4.py": "fea5ffab8d296e796c75f130a0afb7f646d14f674c17fae92fe165722a521953",
     "src/features/feature_engineering.py": "f0fddfa130a8649d93e61f3eb8f3c92331cf0529530742fa7e9275c8eb9af494",
     "src/features/splitting.py": "7d15ac7de2837e4b5d0925360b32b86677f7443ea6e99acb143976e55b628627",
-    "src/evaluation/hda.py": "2eb620d8eb073f65d31afb568e3e86b5595ba6f70ac6db8dd1434c14dd67e04e",
+    "src/evaluation/hda.py": "e1de022165a7f58a41561ccce5bcc48ab42d9c26709bbcabbc46648341a193a2",
     "src/evaluation/baseline.py": "138464534d8a24535d100cfe43bf863b884ac4a4acb4c96841dd9275ab87fb14",
-    "src/training/thesis_protocol.py": "c1d2fde38468f0365de4ddb4a8f8089b92d1a37f4c4debae256f189bc53c2edd"
-  }
+    "src/training/thesis_protocol.py": "a8eb0640350ea6bd33722a6e54fffb90994d5dfe4a98294806ec6dfb8ddc8b08"
+  },
+  "source_pretraining_seed": 42
 }

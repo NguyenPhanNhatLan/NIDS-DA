@@ -1,4 +1,4 @@
-# HDA thesis protocol v1
+# HDA thesis protocol v2: fixed source, multiple adaptation seeds
 
 The current CICIDS test set was used to inspect labels and choose the pseudo-label
 bands. Existing v2/v4 results, including 0.5861, are development/exploratory results.
@@ -8,7 +8,7 @@ Repartitioning already inspected records cannot create an untouched holdout.
 ## Frozen experiment
 
 The executable settings are in `configs/hda_thesis_protocol.json`. V2 uses hidden
-256D marginal MMD. V4 starts from the same-seed v2 adapter and adds the average of
+256D marginal MMD. V4 starts from the same-adaptation-seed v2 adapter and adds the average of
 Normal and Attack conditional latent 168D MMD, weighted by 1.0. No further tuning
 is allowed under this protocol version after final labels are opened.
 
@@ -19,10 +19,17 @@ adapter BN running buffers; conditional batches use adapter BN in eval mode.
 V4 uses 64 samples per class/domain, fixed teacher pseudo-labels from adaptation
 train quantiles (bottom 2% Normal; 95–98% Attack), and the last training epoch.
 
-Seed 42 remains the development seed. Planned final seeds are 42, 43, 44. This
-does not launch extra training. All final seeds use the identical data split,
-preprocessing, quantile rules, and hyperparameters; only the training RNG changes.
-Each seed needs its own UNSW checkpoint/validation threshold and its own v2 teacher.
+Source pretraining is fixed: every run loads `unsw_seed42.pt` and uses the threshold
+from `results/baseline/unsw_seed42.json`. Adaptation seeds are 42, 43, 44 for the
+current internal/development evaluation. Only the adaptation initialization,
+data shuffling, and pool sampling RNG varies. The data split, preprocessing,
+source weights, quantile rules, and hyperparameters stay fixed. V4 seed 43 uses
+the v2 adaptation-seed-43 teacher, both using source seed 42. No UNSW seed-43/44
+pretraining is required. This measures adaptation variability conditional on one
+source model; it does not estimate variability of the full pretraining pipeline.
+`--seed` remains an alias for `--adaptation-seed`. Both seed fields are saved in
+checkpoints and JSON results. Final seeds remain unset because no untouched data
+is available. These changes do not launch extra training.
 
 ## Data roles
 
@@ -45,21 +52,22 @@ on that train only and retrain both v2 and v4 under a new, finalized protocol ha
 
 ## Commands
 
-Retraining uses a separate checkpoint namespace; legacy checkpoints are not final
-protocol checkpoints. Do not run until the data roles have been finalized.
+Retraining uses a new `hda_thesis_v2_fixed_source` checkpoint namespace. Previous
+protocol checkpoints are preserved and have a different protocol hash. The
+current development roles support an internal evaluation, not an untouched test.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m training.hda_v2 --protocol configs/hda_thesis_protocol.json --seed 42
-PYTHONPATH=src .venv/bin/python -m training.hda_v4 --protocol configs/hda_thesis_protocol.json --seed 42
-PYTHONPATH=src .venv/bin/python -m evaluation.hda --protocol configs/hda_thesis_protocol.json --phase development --version v4 --seed 42
+PYTHONPATH=src .venv/bin/python -m training.hda_v2 --protocol configs/hda_thesis_protocol.json --source-seed 42 --adaptation-seed 43
+PYTHONPATH=src .venv/bin/python -m training.hda_v4 --protocol configs/hda_thesis_protocol.json --source-seed 42 --adaptation-seed 43
+PYTHONPATH=src .venv/bin/python -m evaluation.hda --protocol configs/hda_thesis_protocol.json --phase development --version v4 --adaptation-seed 43
 ```
 
 Final evaluation checks the holdout readiness flags and requires a checkpoint
 carrying the same protocol hash. The final path is deliberately unset; final
 evaluation currently stops before reading any target labels.
 
-After protocol/data freeze, train/evaluate v2 and v4 for all three planned seeds
-with `--phase final`. Preserve each result before aggregating AP, ROC-AUC, F1,
+Train/evaluate v2 and v4 for the three adaptation seeds with `--phase development`.
+Preserve each result before aggregating AP, ROC-AUC, F1,
 Recall and FPR as mean ± sample standard deviation. Report margin ranking and
 geometry as explanatory post-training diagnostics; do not use them to tune the
 architecture after opening the final test. Any subsequent tuning requires a new
