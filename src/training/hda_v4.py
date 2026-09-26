@@ -112,6 +112,10 @@ def train_hda_v4(source_model, teacher, source_loader, target_loader,
     student = HDAV1Model(teacher.adapter.input_dim, source_model).to(device)
     student.adapter.load_state_dict(teacher.adapter.state_dict())
     optimizer = torch.optim.Adam(student.adapter.parameters(), lr=lr, weight_decay=1e-4)
+    adapter_bns = [
+        module for module in student.adapter.modules()
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm)
+    ]
     history = []
 
     for epoch in range(1, epochs + 1):
@@ -132,7 +136,7 @@ def train_hda_v4(source_model, teacher, source_loader, target_loader,
                     source_x, _ = next(source_batches)
                 except StopIteration:
                     raise ValueError("Source marginal loader không có batch.") from None
-            # Natural distributions for the v2 hidden anchor.
+            # Natural target batch updates TargetAdapter BN running statistics.
             with torch.no_grad():
                 source_h = source_model.encode_hidden(source_x.to(device))
             target_h = student.adapter(target_x.to(device))
@@ -141,7 +145,17 @@ def train_hda_v4(source_model, teacher, source_loader, target_loader,
             # A separate balanced batch for conditional P(z | class).
             target_normal = sample_pool(target_pools[0], class_batch_size, device)
             target_attack = sample_pool(target_pools[1], class_batch_size, device)
-            target_z = student.encoder(torch.cat((target_normal, target_attack)))
+            # Balanced conditional samples must not change running statistics.
+            # eval mode still allows gradients through BN affine parameters.
+            for bn in adapter_bns:
+                bn.eval()
+            try:
+                target_z = student.encoder(
+                    torch.cat((target_normal, target_attack), dim=0)
+                )
+            finally:
+                for bn in adapter_bns:
+                    bn.train()
             source_normal_z = sample_pool(source_pools[0], class_batch_size, device)
             source_attack_z = sample_pool(source_pools[1], class_batch_size, device)
             normal_mmd, _ = mmd_loss(source_normal_z, target_z[:class_batch_size])
@@ -174,18 +188,34 @@ def main():
     parser.add_argument("--class-batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lambda-conditional", type=float, default=1.0)
+    parser.add_argument("--protocol", default=None)
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 2 or args.class_batch_size < 2:
         raise ValueError("epochs >= 1; batch sizes >= 2.")
     if not np.isfinite([args.lr, args.lambda_conditional]).all() or min(args.lr, args.lambda_conditional) <= 0:
         raise ValueError("lr và lambda-conditional phải dương, hữu hạn.")
     set_seed(args.seed)
+    protocol = None
+    protocol_hash = None
+    target_train_path = FEATURE_DIR / "cicids_train"
+    target_metadata_path = FEATURE_DIR / "cicids_metadata.json"
+    checkpoint_dir = MODEL_DIR / "hda"
+    if args.protocol is not None:
+        from training.thesis_protocol import load_protocol, resolve_path, validate_training
+        protocol, protocol_hash = load_protocol(args.protocol)
+        validate_training(protocol, "v4", args.seed, args.epochs, args.batch_size,
+                          args.lr, args.class_batch_size, args.lambda_conditional)
+        target_train_path = resolve_path(protocol["target_data"]["adaptation_train"])
+        target_metadata_path = resolve_path(protocol["target_data"]["metadata"])
+        checkpoint_dir = resolve_path(protocol["checkpoint_dir"])
     device = torch.device("cuda" if torch.cuda.is_available() else
                           "mps" if torch.backends.mps.is_available() else "cpu")
     source_path = MODEL_DIR / "baselines" / f"unsw_seed{args.seed}.pt"
-    teacher_path = MODEL_DIR / "hda" / f"unsw_to_cicids_mmd_v2_seed{args.seed}.pt"
+    teacher_path = checkpoint_dir / f"unsw_to_cicids_mmd_v2_seed{args.seed}.pt"
     source_checkpoint = torch.load(source_path, map_location="cpu", weights_only=True)
     teacher_checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
+    if protocol is not None and teacher_checkpoint.get("protocol_sha256") != protocol_hash:
+        raise ValueError("Teacher v2 chưa được retrain theo cùng frozen protocol.")
     if teacher_checkpoint.get("method") != "hda_shared_semantic_hidden_mmd":
         raise ValueError("Teacher phải là checkpoint HDA v2 hidden MMD.")
     source_dim = int(source_checkpoint["input_dim"])
@@ -193,7 +223,8 @@ def main():
     if int(teacher_checkpoint["source_dim"]) != source_dim or int(teacher_checkpoint["seed"]) != args.seed:
         raise ValueError("Teacher không khớp source dimension/seed.")
     for domain, dimension in (("unsw", source_dim), ("cicids", target_dim)):
-        metadata = json.loads((FEATURE_DIR / f"{domain}_metadata.json").read_text())
+        metadata_path = target_metadata_path if domain == "cicids" else FEATURE_DIR / "unsw_metadata.json"
+        metadata = json.loads(metadata_path.read_text())
         if int(metadata["input_dim"]) != dimension:
             raise ValueError(f"{domain} metadata không khớp checkpoint.")
     source = BaselineMLP(source_dim).to(device)
@@ -203,7 +234,7 @@ def main():
     teacher.eval()
     print(f"V4 | device={device} | frozen teacher={teacher_path}")
     normal_pool, attack_pool, pseudo_metadata = build_pseudo_pools(
-        teacher, make_teacher_loader(FEATURE_DIR / "cicids_train", target_dim, args.batch_size), device
+        teacher, make_teacher_loader(target_train_path, target_dim, args.batch_size), device
     )
     source_pools = build_source_pools(
         source, make_loader(FEATURE_DIR / "unsw_train", source_dim, args.batch_size), device
@@ -211,24 +242,30 @@ def main():
     student, history = train_hda_v4(
         source, teacher,
         make_loader(FEATURE_DIR / "unsw_train", source_dim, args.batch_size, training=True),
-        make_unlabeled_loader(FEATURE_DIR / "cicids_train", target_dim, args.batch_size),
+        make_unlabeled_loader(target_train_path, target_dim, args.batch_size),
         source_pools, {0: normal_pool, 1: attack_pool},
         epochs=args.epochs, lr=args.lr, class_batch_size=args.class_batch_size,
         lambda_conditional=args.lambda_conditional,
     )
-    output_path = MODEL_DIR / "hda" / f"unsw_to_cicids_mmd_v4_seed{args.seed}.pt"
-    torch.save({
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    output_path = checkpoint_dir / f"unsw_to_cicids_mmd_v4_seed{args.seed}.pt"
+    checkpoint_data = {
         "method": "hda_fixed_v2_teacher_conditional_mmd", "version": "v4",
         "alignment_space": "hidden_256+conditional_latent_168",
         "seed": args.seed, "source_dim": source_dim, "target_dim": target_dim,
         "latent_dim": 168, "target_labels_used": False,
         "source_checkpoint": str(source_path), "teacher_checkpoint": str(teacher_path),
         "pseudo_label_metadata": pseudo_metadata, "lambda_conditional": args.lambda_conditional,
+        "conditional_adapter_bn_mode": "eval",
         "epochs": args.epochs, "batch_size": args.batch_size,
         "class_batch_size": args.class_batch_size, "learning_rate": args.lr,
         "history": history,
         "target_adapter_state_dict": {k: v.detach().cpu() for k, v in student.adapter.state_dict().items()},
-    }, output_path)
+    }
+    if protocol is not None:
+        checkpoint_data["protocol_id"] = protocol["protocol_id"]
+        checkpoint_data["protocol_sha256"] = protocol_hash
+    torch.save(checkpoint_data, output_path)
     print(f"Saved: {output_path}")
 
 

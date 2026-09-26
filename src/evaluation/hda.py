@@ -383,9 +383,12 @@ def diagnose_hidden(source_model, target_model, source_loader, target_loader):
     print(f"Hidden bandwidth: {hidden_bw.item():.6f}")
 
 
-def compare_v2_v4(source_model, student, source_loader, target_loader, seed):
+def compare_v2_v4(source_model, student, source_loader, target_loader, seed,
+                  checkpoint_dir=None):
     """Test labels only: compare ranking and latent geometry after training."""
-    teacher_path = MODEL_DIR / "hda" / f"unsw_to_cicids_mmd_v2_seed{seed}.pt"
+    if checkpoint_dir is None:
+        checkpoint_dir = MODEL_DIR / "hda"
+    teacher_path = checkpoint_dir / f"unsw_to_cicids_mmd_v2_seed{seed}.pt"
     checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
     if checkpoint.get("method") != "hda_shared_semantic_hidden_mmd":
         raise ValueError("Comparison cần đúng teacher v2.")
@@ -444,10 +447,30 @@ def main():
         choices=["v0", "v1", "v2", "v3", "v4"],
         default="v0",
     )
+    parser.add_argument("--protocol", default=None)
+    parser.add_argument("--phase", choices=["development", "final"], default="development")
 
     args = parser.parse_args()
 
     seed = args.seed
+    protocol = None
+    protocol_hash = None
+    checkpoint_dir = MODEL_DIR / "hda"
+    target_test_path = FEATURE_DIR / "cicids_test"
+    output_dir = PROJECT_DIR / "results" / "hda"
+    if args.protocol is not None:
+        from training.thesis_protocol import load_protocol, resolve_path, evaluation_target
+        protocol, protocol_hash = load_protocol(args.protocol)
+        if args.version not in protocol["methods"]:
+            raise ValueError("Version không nằm trong frozen thesis protocol.")
+        allowed_seeds = protocol["final_seeds"] if args.phase == "final" else protocol["development_seeds"]
+        if seed not in allowed_seeds:
+            raise ValueError("Seed không được khai báo cho phase này.")
+        target_test_path = evaluation_target(protocol, args.phase)
+        checkpoint_dir = resolve_path(protocol["checkpoint_dir"])
+        output_dir = resolve_path(protocol["result_dir"]) / args.phase / "hda"
+    elif args.phase == "final":
+        raise ValueError("Final evaluation yêu cầu --protocol với holdout đã xác nhận.")
 
     # ======================================================
     # Load source checkpoint
@@ -491,12 +514,14 @@ def main():
         checkpoint_name = f"unsw_to_cicids_mmd_{args.version}_seed{seed}.pt"
     else:
         checkpoint_name = f"unsw_to_cicids_mmd_seed{seed}.pt"
-    hda_checkpoint_path = MODEL_DIR / "hda" / checkpoint_name
+    hda_checkpoint_path = checkpoint_dir / checkpoint_name
     hda_checkpoint = torch.load(
         hda_checkpoint_path,
         map_location="cpu",
         weights_only=False,
     )
+    if protocol is not None and hda_checkpoint.get("protocol_sha256") != protocol_hash:
+        raise ValueError("Checkpoint chưa được retrain theo cùng frozen protocol.")
     target_dim = int(hda_checkpoint["target_dim"])
     if int(hda_checkpoint.get("source_dim", source_dim)) != source_dim:
         raise ValueError("HDA checkpoint không khớp source checkpoint.")
@@ -532,8 +557,7 @@ def main():
     # ======================================================
 
     test_loader = make_loader(
-        FEATURE_DIR
-        / "cicids_test",
+        target_test_path,
         input_dim=target_dim,
         batch_size=256,
         training=False,
@@ -556,7 +580,8 @@ def main():
     if args.version in ("v1", "v2", "v3", "v4"):
         diagnose_hidden(source_model, target_model, source_loader, test_loader)
     if args.version == "v4":
-        compare_v2_v4(source_model, target_model, source_loader, test_loader, seed)
+        compare_v2_v4(source_model, target_model, source_loader, test_loader, seed,
+                     checkpoint_dir=checkpoint_dir)
     
     print("\n--- SCORE DIAGNOSTICS ---")
 
@@ -663,6 +688,11 @@ def main():
 
         **metrics,
     }
+    if protocol is not None:
+        result.update(protocol_id=protocol["protocol_id"], protocol_sha256=protocol_hash,
+                      phase=args.phase, target_data=str(target_test_path))
+    else:
+        result["phase"] = "legacy_development"
     
     normal_scores = scores[
     labels == 0
@@ -716,12 +746,6 @@ def main():
             f"predicted attack="
             f"{positive_rate:.4f}"
         )
-
-    output_dir = (
-        PROJECT_DIR
-        / "results"
-        / "hda"
-    )
 
     output_dir.mkdir(
         parents=True,

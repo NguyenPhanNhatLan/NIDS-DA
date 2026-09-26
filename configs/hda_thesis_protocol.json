@@ -1,0 +1,78 @@
+{
+  "protocol_id": "hda_thesis_v1",
+  "architecture_frozen": true,
+  "development_seeds": [
+    42
+  ],
+  "final_seeds": [
+    42,
+    43,
+    44
+  ],
+  "methods": [
+    "v2",
+    "v4"
+  ],
+  "architecture": {
+    "target_adapter": "Linear(input_dim, 256) -> BatchNorm1d(256) -> ReLU",
+    "adapter_dropout": 0,
+    "shared_fc2": "frozen 256 -> 168",
+    "shared_bn2": "frozen affine parameters, eval running statistics",
+    "classifier": "frozen source classifier",
+    "conditional_adapter_bn": "eval; natural marginal forward uses train mode",
+    "kernel": "single RBF, biased MMD squared, per-term median bandwidth"
+  },
+  "training": {
+    "epochs": 10,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "class_batch_size": 64,
+    "lambda_conditional": 1.0,
+    "checkpoint_selection": "last epoch; no target-label selection"
+  },
+  "pseudo_labels": {
+    "teacher": "same-seed HDA v2, frozen, eval mode",
+    "threshold_data": "all adaptation train features only",
+    "score": "attack logit minus normal logit",
+    "normal_quantile": 0.02,
+    "attack_quantile_low": 0.95,
+    "attack_quantile_high_exclusive": 0.98,
+    "dynamic_updates": false,
+    "source_conditional_sampling": "class-balanced frozen latent pools, with replacement"
+  },
+  "target_data": {
+    "adaptation_train": "data/features/cicids_train",
+    "metadata": "data/features/cicids_metadata.json",
+    "development": "data/features/cicids_test",
+    "final_test": null,
+    "untouched_holdout_confirmed": false,
+    "disjointness_verified": false,
+    "holdout_provenance": "Pending: previously inspected test is development; do not relabel it final.",
+    "preprocessing": "Existing CICIDS pipeline fitted on adaptation train only; transform dev/final without refit."
+  },
+  "checkpoint_dir": "models/thesis/hda_thesis_v1/hda",
+  "result_dir": "results/thesis/hda_thesis_v1",
+  "decision_threshold": "same-seed UNSW validation threshold, no target-label optimization",
+  "metrics": [
+    "pr_auc",
+    "roc_auc",
+    "f1",
+    "recall",
+    "fpr"
+  ],
+  "aggregation": "mean and sample standard deviation (ddof=1) over the same fixed final split",
+  "code_sha256": {
+    "src/models/baseline.py": "5053c25559896e416dd1c579d80b3311a1c9a01d683a70c3fcfa430fd5cc6234",
+    "src/models/hda_v1.py": "4bcb529be8b4c22e1ef9122a5935e3168f4438e28145c751d79dccf5e2cc0264",
+    "src/training/adaptation.py": "065f8a36156038a7d161b7322d33ddba963e21b140ed3fdaad264e5729f94184",
+    "src/training/hda_shared.py": "48ca10c54e5beba7ecfffc4e44fb4f1dae67bff97c85c3c77af7c632ee990b30",
+    "src/training/hda_v2.py": "d39efd69b9b3fdca6d792504634fd4b438412789ccf8191c7d9fff40a4a4f18a",
+    "src/training/hda_v4.py": "5887e7a121619996e414c403927306d6116b253c96b657c3059857dbbd4b871f",
+    "src/features/feature_engineering.py": "f0fddfa130a8649d93e61f3eb8f3c92331cf0529530742fa7e9275c8eb9af494",
+    "src/features/splitting.py": "7d15ac7de2837e4b5d0925360b32b86677f7443ea6e99acb143976e55b628627",
+    "src/evaluation/hda.py": "2eb620d8eb073f65d31afb568e3e86b5595ba6f70ac6db8dd1434c14dd67e04e",
+    "src/evaluation/baseline.py": "138464534d8a24535d100cfe43bf863b884ac4a4acb4c96841dd9275ab87fb14",
+    "src/training/thesis_protocol.py": "c1d2fde38468f0365de4ddb4a8f8089b92d1a37f4c4debae256f189bc53c2edd"
+  }
+}

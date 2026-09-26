@@ -18,10 +18,11 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--protocol", default=None)
     args = parser.parse_args()
     run_training(
         seed=args.seed, epochs=args.epochs, batch_size=args.batch_size,
-        lr=args.lr, alignment_space="hidden",
+        lr=args.lr, alignment_space="hidden", protocol_path=args.protocol,
     )
 
 

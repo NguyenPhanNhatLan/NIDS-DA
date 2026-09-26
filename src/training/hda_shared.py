@@ -231,16 +231,30 @@ def train_shared_hda(
 
 
 def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
-                 alignment_space="latent", lambda_latent=None):
+                 alignment_space="latent", lambda_latent=None, protocol_path=None):
     if batch_size < 2 or epochs < 1 or lr <= 0:
         raise ValueError("batch-size >= 2, epochs >= 1 và lr > 0 là bắt buộc")
     if alignment_space not in ("latent", "hidden", "dual"):
         raise ValueError("alignment_space phải là latent, hidden hoặc dual.")
     set_seed(seed)
+    protocol = None
+    protocol_hash = None
+    target_train_path = FEATURE_DIR / "cicids_train"
+    target_metadata_path = FEATURE_DIR / "cicids_metadata.json"
+    output_dir = MODEL_DIR / "hda"
+    if protocol_path is not None:
+        from training.thesis_protocol import load_protocol, resolve_path, validate_training
+        protocol, protocol_hash = load_protocol(protocol_path)
+        if alignment_space != "hidden":
+            raise ValueError("Frozen thesis training yêu cầu HDA v2 hidden MMD.")
+        validate_training(protocol, "v2", seed, epochs, batch_size, lr)
+        target_train_path = resolve_path(protocol["target_data"]["adaptation_train"])
+        target_metadata_path = resolve_path(protocol["target_data"]["metadata"])
+        output_dir = resolve_path(protocol["checkpoint_dir"])
 
     with (FEATURE_DIR / "unsw_metadata.json").open(encoding="utf-8") as file:
         source_dim = int(json.load(file)["input_dim"])
-    with (FEATURE_DIR / "cicids_metadata.json").open(encoding="utf-8") as file:
+    with target_metadata_path.open(encoding="utf-8") as file:
         target_dim = int(json.load(file)["input_dim"])
 
     checkpoint_path = MODEL_DIR / "baselines" / f"unsw_seed{seed}.pt"
@@ -264,7 +278,7 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
     )
     # Target labels are never loaded by this loader.
     target_loader = make_unlabeled_loader(
-        FEATURE_DIR / "cicids_train", target_dim, batch_size
+        target_train_path, target_dim, batch_size
     )
     training_result = train_shared_hda(
         source_model, source_loader, target_loader, target_dim,
@@ -275,7 +289,6 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
     if alignment_space == "dual":
         lambda_latent, initial_mmd = training_result[2:]
 
-    output_dir = MODEL_DIR / "hda"
     output_dir.mkdir(parents=True, exist_ok=True)
     version = {"latent": "v1", "hidden": "v2", "dual": "v3"}[alignment_space]
     output_path = output_dir / f"unsw_to_cicids_mmd_{version}_seed{seed}.pt"
@@ -308,5 +321,8 @@ def run_training(seed=42, epochs=10, batch_size=256, lr=1e-3,
     if version == "v3":
         checkpoint_data["lambda_latent"] = lambda_latent
         checkpoint_data["initial_mmd"] = initial_mmd
+    if protocol is not None:
+        checkpoint_data["protocol_id"] = protocol["protocol_id"]
+        checkpoint_data["protocol_sha256"] = protocol_hash
     torch.save(checkpoint_data, output_path)
     print(f"Saved: {output_path}")
