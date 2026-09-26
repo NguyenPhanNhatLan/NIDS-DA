@@ -36,14 +36,19 @@ MODEL_DIR = (
 
 
 def diagnose_batch_norm(model, loader):
-    """So sánh BN running stats và BN batch stats, không cập nhật model."""
+    """Chỉ thử batch stats của TargetAdapter BN; shared BN2 luôn eval."""
+    if not hasattr(model, "adapter"):
+        print("\n--- BN MODE DIAGNOSTIC ---")
+        print("Model không có TargetAdapter; bỏ qua diagnostic này.")
+        return
+
     batch_norms = [
-        layer for layer in model.encoder.modules()
+        layer for layer in model.adapter.modules()
         if isinstance(layer, torch.nn.modules.batchnorm._BatchNorm)
     ]
     if not batch_norms:
         print("\n--- BN MODE DIAGNOSTIC ---")
-        print("Encoder không có BatchNorm.")
+        print("TargetAdapter không có BatchNorm.")
         return
 
     # Sao lưu running_mean, running_var, num_batches_tracked.
@@ -71,9 +76,11 @@ def diagnose_batch_norm(model, loader):
                     for name, value in layer.named_buffers():
                         value.copy_(original[name])
                 model.eval()
+                model.encoder.shared_bn2.eval()
+                model.classifier.eval()
                 _, eval_logits = model(features)
 
-                # Dropout vẫn ở eval; chỉ BN dùng thống kê của batch hiện tại.
+                # Chỉ TargetAdapter BN dùng batch stats; shared BN2 luôn eval.
                 for layer in batch_norms:
                     layer.train()
                 _, batch_logits = model(features)
@@ -101,15 +108,15 @@ def diagnose_batch_norm(model, loader):
     batch_scores = np.concatenate(batch_scores)
     print("\n--- BN MODE DIAGNOSTIC (không dùng cho report) ---")
     print(f"Đã bỏ {skipped_rows} dòng ở batch cuối có kích thước 1.")
-    print(f"Eval-mode score mean: {eval_scores.mean():.6f}")
-    print(f"Batch-stat score mean: {batch_scores.mean():.6f}")
+    print(f"Target BN running stats score mean: {eval_scores.mean():.6f}")
+    print(f"Target BN batch stats score mean: {batch_scores.mean():.6f}")
 
     if (labels == 1).any():
-        print(f"Eval-mode attack mean: {eval_scores[labels == 1].mean():.6f}")
-        print(f"Batch-stat attack mean: {batch_scores[labels == 1].mean():.6f}")
+        print(f"Target BN running stats attack mean: {eval_scores[labels == 1].mean():.6f}")
+        print(f"Target BN batch stats attack mean: {batch_scores[labels == 1].mean():.6f}")
     if len(np.unique(labels)) == 2:
-        print(f"Batch-stat AP: {average_precision_score(labels, batch_scores):.4f}")
-        print(f"Batch-stat ROC-AUC: {roc_auc_score(labels, batch_scores):.4f}")
+        print(f"Target BN batch stats AP: {average_precision_score(labels, batch_scores):.4f}")
+        print(f"Target BN batch stats ROC-AUC: {roc_auc_score(labels, batch_scores):.4f}")
     else:
         print("AP/ROC-AUC cần cả hai lớp; không tính cho diagnostic này.")
 
@@ -326,7 +333,7 @@ def main():
     )
     parser.add_argument(
         "--version",
-        choices=["v0", "v1", "v2"],
+        choices=["v0", "v1", "v2", "v3"],
         default="v0",
     )
 
@@ -372,7 +379,7 @@ def main():
     # Load HDA target encoder
     # ======================================================
 
-    if args.version in ("v1", "v2"):
+    if args.version in ("v1", "v2", "v3"):
         checkpoint_name = f"unsw_to_cicids_mmd_{args.version}_seed{seed}.pt"
     else:
         checkpoint_name = f"unsw_to_cicids_mmd_seed{seed}.pt"
@@ -388,11 +395,12 @@ def main():
     if int(hda_checkpoint.get("seed", seed)) != seed:
         raise ValueError("HDA checkpoint không khớp seed.")
 
-    if args.version in ("v1", "v2"):
-        expected_method = (
-            "hda_shared_semantic_hidden_mmd"
-            if args.version == "v2" else "hda_v1_shared_tail_single_rbf_mmd"
-        )
+    if args.version in ("v1", "v2", "v3"):
+        expected_method = {
+            "v1": "hda_v1_shared_tail_single_rbf_mmd",
+            "v2": "hda_shared_semantic_hidden_mmd",
+            "v3": "hda_dual_level_single_rbf_mmd",
+        }[args.version]
         if hda_checkpoint.get("method") != expected_method:
             raise ValueError(f"Checkpoint không đúng HDA{args.version}.")
         target_model = HDAV1Model(target_dim, source_model)
@@ -436,7 +444,7 @@ def main():
         training=False,
     )
     diagnose_latents(source_model, source_loader, target_model, test_loader)
-    if args.version in ("v1", "v2"):
+    if args.version in ("v1", "v2", "v3"):
         diagnose_hidden(source_model, target_model, source_loader, test_loader)
     
     print("\n--- SCORE DIAGNOSTICS ---")
