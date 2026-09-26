@@ -2,13 +2,11 @@
   "protocol_id": "hda_thesis_v1",
   "architecture_frozen": true,
   "development_seeds": [
-    42
-  ],
-  "final_seeds": [
     42,
     43,
     44
   ],
+  "final_seeds": [],
   "methods": [
     "v2",
     "v4"
