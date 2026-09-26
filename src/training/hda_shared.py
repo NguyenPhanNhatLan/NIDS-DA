@@ -7,7 +7,11 @@ import torch
 
 from models.baseline import BaselineMLP
 from models.hda_v1 import HDAV1Model
-from training.adaptation import make_unlabeled_loader, mmd_loss
+from training.adaptation import (
+    estimate_bandwidth_squared,
+    make_unlabeled_loader,
+    mmd_loss,
+)
 from training.baseline import make_loader, set_seed
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -15,42 +19,82 @@ FEATURE_DIR = PROJECT_DIR / "data" / "features"
 MODEL_DIR = PROJECT_DIR / "models"
 
 
+def dual_level_mmd(source_features, target_features):
+    """Same single-RBF MMD as mmd_loss, with one distance matrix."""
+    batch_size = min(len(source_features), len(target_features))
+    source_features = source_features[:batch_size]
+    target_features = target_features[:batch_size]
+    bandwidth_squared = estimate_bandwidth_squared(
+        source_features, target_features
+    )
+    combined = torch.cat((source_features, target_features), dim=0)
+    distance_squared = torch.cdist(combined, combined).square()
+    kernel = torch.exp(-distance_squared / (2.0 * bandwidth_squared))
+    loss = (
+        kernel[:batch_size, :batch_size].mean()
+        + kernel[batch_size:, batch_size:].mean()
+        - 2.0 * kernel[:batch_size, batch_size:].mean()
+    )
+    return loss, torch.sqrt(bandwidth_squared)
+
+
 def dual_mmd(source_model, target_model, source_x, target_x):
     with torch.no_grad():
         source_h = source_model.encode_hidden(source_x)
-        source_z, _ = source_model(source_x)
+        source_z = source_model.fc2(source_h)
+        source_z = source_model.bn2(source_z)
+        source_z = torch.relu(source_z)
 
     target_h = target_model.adapter(target_x)
     target_z = target_model.encoder.shared_fc2(target_h)
     target_z = target_model.encoder.shared_bn2(target_z)
     target_z = torch.relu(target_z)
 
-    hidden_mmd, hidden_bw = mmd_loss(source_h, target_h)
-    latent_mmd, latent_bw = mmd_loss(source_z, target_z)
+    hidden_mmd, hidden_bw = dual_level_mmd(source_h, target_h)
+    latent_mmd, latent_bw = dual_level_mmd(source_z, target_z)
     return hidden_mmd, hidden_bw, latent_mmd, latent_bw
 
 
 def initial_dual_mmd(source_model, target_model, source_loader, target_loader, device):
-    """Measure three batches without labels or running-stat updates."""
-    target_model.eval()
+    """Measure three batches in training mode without changing BN buffers."""
+    source_model.eval()
+    target_model.adapter.train()
+    target_model.encoder.shared_fc2.eval()
+    target_model.encoder.shared_bn2.eval()
+    target_model.classifier.eval()
+
+    batch_norms = [
+        module for module in target_model.adapter.modules()
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm)
+    ]
+    saved_buffers = [
+        {name: value.clone() for name, value in bn.named_buffers()}
+        for bn in batch_norms
+    ]
     source_batches = iter(source_loader)
     hidden_values = []
     latent_values = []
-    with torch.no_grad():
-        for step, target_x in enumerate(target_loader):
-            if step == 3:
-                break
-            try:
-                source_x, _ = next(source_batches)
-            except StopIteration:
-                source_batches = iter(source_loader)
-                source_x, _ = next(source_batches)
-            hidden_mmd, _, latent_mmd, _ = dual_mmd(
-                source_model, target_model,
-                source_x.to(device), target_x.to(device),
-            )
-            hidden_values.append(hidden_mmd.item())
-            latent_values.append(latent_mmd.item())
+    try:
+        with torch.no_grad():
+            for step, target_x in enumerate(target_loader):
+                if step == 3:
+                    break
+                try:
+                    source_x, _ = next(source_batches)
+                except StopIteration:
+                    source_batches = iter(source_loader)
+                    source_x, _ = next(source_batches)
+                hidden_mmd, _, latent_mmd, _ = dual_mmd(
+                    source_model, target_model,
+                    source_x.to(device), target_x.to(device),
+                )
+                hidden_values.append(hidden_mmd.item())
+                latent_values.append(latent_mmd.item())
+    finally:
+        # no_grad does not prevent BatchNorm from updating running statistics.
+        for bn, original in zip(batch_norms, saved_buffers):
+            for name, value in bn.named_buffers():
+                value.copy_(original[name])
 
     if not hidden_values:
         raise ValueError("Không có batch để đo MMD ban đầu.")

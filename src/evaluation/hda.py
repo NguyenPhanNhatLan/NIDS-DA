@@ -145,7 +145,65 @@ def collect_logits_and_labels(model, loader):
     return labels, logits
 
 
-def diagnose_logits(model, loader):
+def diagnose_rank_enrichment(labels, margins):
+    """Attack rate at the highest and lowest logit-margin ranks."""
+    if len(labels) == 0 or len(labels) != len(margins):
+        raise ValueError("Rank enrichment cần labels và margins cùng độ dài, không rỗng.")
+
+    order = np.argsort(margins)[::-1]
+    ranked_labels = labels[order]
+    prevalence = labels.mean()
+
+    print("\n--- RANK ENRICHMENT (logit margin, diagnostic only) ---")
+    print(f"Overall attack prevalence: {prevalence:.4f}")
+    for fraction in (0.01, 0.02, 0.05, 0.10, 0.20):
+        n = max(1, int(len(labels) * fraction))
+        top_rate = ranked_labels[:n].mean()
+        bottom_rate = ranked_labels[-n:].mean()
+        top_enrichment = top_rate / prevalence if prevalence > 0 else float("nan")
+        bottom_enrichment = bottom_rate / prevalence if prevalence > 0 else float("nan")
+        print(
+            f"{fraction:.0%} ({n} rows) | "
+            f"top attack rate={top_rate:.4f}, enrichment={top_enrichment:.2f}x | "
+            f"bottom attack rate={bottom_rate:.4f}, enrichment={bottom_enrichment:.2f}x"
+        )
+
+
+def diagnose_margin_bands(labels, margins):
+    """Percentile ranks: 0–1% is lowest margin, 99–100% is highest."""
+    if len(labels) == 0 or len(labels) != len(margins):
+        raise ValueError("Margin bands cần labels và margins cùng độ dài, không rỗng.")
+
+    order = np.argsort(margins)
+    ranked_labels = labels[order]
+    n = len(labels)
+    bands = [
+        (0.00, 0.01),
+        (0.01, 0.02),
+        (0.02, 0.05),
+        (0.05, 0.10),
+        (0.10, 0.20),
+        (0.80, 0.90),
+        (0.90, 0.95),
+        (0.95, 0.98),
+        (0.98, 0.99),
+        (0.99, 1.00),
+    ]
+    print("\n--- MARGIN PERCENTILE BANDS (diagnostic only) ---")
+    for low, high in bands:
+        start = int(n * low)
+        end = int(n * high)
+        band_labels = ranked_labels[start:end]
+        if len(band_labels) == 0:
+            print(f"{low:.0%}–{high:.0%} | rows=0 | attack rate=N/A")
+            continue
+        print(
+            f"{low:.0%}–{high:.0%} | rows={len(band_labels)} | "
+            f"attack rate={band_labels.mean():.4f}"
+        )
+
+
+def diagnose_logits(model, loader, rank_enrichment=False):
     labels, logits = collect_logits_and_labels(model, loader)
     normal_logit = logits[:, 0]
     attack_logit = logits[:, 1]
@@ -169,6 +227,9 @@ def diagnose_logits(model, loader):
         print(f"Margin ROC-AUC: {roc_auc_score(labels, margin):.4f}")
     else:
         print("Margin AP/ROC-AUC: N/A (test cần cả hai lớp)")
+    if rank_enrichment:
+        diagnose_rank_enrichment(labels, margin)
+        diagnose_margin_bands(labels, margin)
 
 
 def collect_latents(model, loader, max_samples=10_000):
@@ -322,6 +383,53 @@ def diagnose_hidden(source_model, target_model, source_loader, target_loader):
     print(f"Hidden bandwidth: {hidden_bw.item():.6f}")
 
 
+def compare_v2_v4(source_model, student, source_loader, target_loader, seed):
+    """Test labels only: compare ranking and latent geometry after training."""
+    teacher_path = MODEL_DIR / "hda" / f"unsw_to_cicids_mmd_v2_seed{seed}.pt"
+    checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
+    if checkpoint.get("method") != "hda_shared_semantic_hidden_mmd":
+        raise ValueError("Comparison cần đúng teacher v2.")
+    teacher = HDAV1Model(student.adapter.input_dim, source_model).to(
+        next(source_model.parameters()).device
+    )
+    teacher.adapter.load_state_dict(checkpoint["target_adapter_state_dict"])
+    teacher.eval()
+    source_z, source_y = collect_latents(source_model, source_loader)
+    source_centers = {
+        label: source_z[source_y == label].mean(dim=0)
+        for label in (0, 1) if (source_y == label).any()
+    }
+    print("\n--- V2 vs V4 (test labels, diagnostic only) ---")
+    print("Latent geometry uses at most 10,000 rows per domain.")
+    for version, model in (("v2", teacher), ("v4", student)):
+        labels, logits = collect_logits_and_labels(model, target_loader)
+        margins = logits[:, 1] - logits[:, 0]
+        scores = torch.softmax(torch.from_numpy(logits), dim=1)[:, 1].numpy()
+        print(f"\n{version}:")
+        if len(np.unique(labels)) == 2:
+            print(f"AP={average_precision_score(labels, scores):.6f} | "
+                  f"ROC-AUC={roc_auc_score(labels, scores):.6f}")
+            print(f"Margin AP={average_precision_score(labels, margins):.6f} | "
+                  f"Margin ROC-AUC={roc_auc_score(labels, margins):.6f}")
+        target_z, target_y = collect_latents(model, target_loader)
+        target_centers = {}
+        for label, name in ((0, "Normal"), (1, "Attack")):
+            if (labels == label).any():
+                print(f"{name} margin mean: {margins[labels == label].mean():.6f}")
+            if (target_y == label).any():
+                target_centers[label] = target_z[target_y == label].mean(dim=0)
+        if len(target_centers) == 2:
+            print("Target class separation: "
+                  f"{torch.norm(target_centers[0] - target_centers[1]).item():.6f}")
+        for target_label, target_name in ((0, "Normal"), (1, "Attack")):
+            for source_label, source_name in ((0, "Normal"), (1, "Attack")):
+                if target_label in target_centers and source_label in source_centers:
+                    distance = torch.norm(
+                        target_centers[target_label] - source_centers[source_label]
+                    ).item()
+                    print(f"Target {target_name} -> Source {source_name}: {distance:.6f}")
+
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -333,7 +441,7 @@ def main():
     )
     parser.add_argument(
         "--version",
-        choices=["v0", "v1", "v2", "v3"],
+        choices=["v0", "v1", "v2", "v3", "v4"],
         default="v0",
     )
 
@@ -379,7 +487,7 @@ def main():
     # Load HDA target encoder
     # ======================================================
 
-    if args.version in ("v1", "v2", "v3"):
+    if args.version in ("v1", "v2", "v3", "v4"):
         checkpoint_name = f"unsw_to_cicids_mmd_{args.version}_seed{seed}.pt"
     else:
         checkpoint_name = f"unsw_to_cicids_mmd_seed{seed}.pt"
@@ -395,11 +503,12 @@ def main():
     if int(hda_checkpoint.get("seed", seed)) != seed:
         raise ValueError("HDA checkpoint không khớp seed.")
 
-    if args.version in ("v1", "v2", "v3"):
+    if args.version in ("v1", "v2", "v3", "v4"):
         expected_method = {
             "v1": "hda_v1_shared_tail_single_rbf_mmd",
             "v2": "hda_shared_semantic_hidden_mmd",
             "v3": "hda_dual_level_single_rbf_mmd",
+            "v4": "hda_fixed_v2_teacher_conditional_mmd",
         }[args.version]
         if hda_checkpoint.get("method") != expected_method:
             raise ValueError(f"Checkpoint không đúng HDA{args.version}.")
@@ -435,7 +544,7 @@ def main():
         test_loader,
     )
     diagnose_batch_norm(target_model, test_loader)
-    diagnose_logits(target_model, test_loader)
+    diagnose_logits(target_model, test_loader, rank_enrichment=args.version in ("v2", "v4"))
 
     source_loader = make_loader(
         FEATURE_DIR / "unsw_test",
@@ -444,8 +553,10 @@ def main():
         training=False,
     )
     diagnose_latents(source_model, source_loader, target_model, test_loader)
-    if args.version in ("v1", "v2", "v3"):
+    if args.version in ("v1", "v2", "v3", "v4"):
         diagnose_hidden(source_model, target_model, source_loader, test_loader)
+    if args.version == "v4":
+        compare_v2_v4(source_model, target_model, source_loader, test_loader, seed)
     
     print("\n--- SCORE DIAGNOSTICS ---")
 
@@ -521,16 +632,16 @@ def main():
     # Save
     # ======================================================
 
+    experiment_names = {
+        "v0": "HDA independent encoder + latent RBF-MMD",
+        "v1": "HDA shared tail + latent RBF-MMD",
+        "v2": "HDA shared tail + hidden RBF-MMD",
+        "v3": "HDA shared tail + dual-level RBF-MMD",
+        "v4": "HDA shared tail + fixed v2 pseudo-label conditional RBF-MMD",
+    }
+
     result = {
-        "experiment":
-            (
-                "HDAv2 shared tail + hidden RBF-MMD"
-                if args.version == "v2"
-                else (
-                    "HDAv1 shared tail + marginal RBF-MMD"
-                    if args.version == "v1" else "HDA + marginal RBF-MMD"
-                )
-            ),
+        "experiment": experiment_names[args.version],
 
         "source_domain":
             "UNSW",
@@ -584,11 +695,11 @@ def main():
     )
     
     for threshold_debug in [
-    0.1,
-    0.3,
-    0.5,
-    0.7,
-    0.9,
+        0.1,
+        0.3,
+        0.5,
+        0.7,
+        0.9,
         0.9843,
     ]:
         predictions = (
@@ -599,12 +710,12 @@ def main():
             predictions.mean()
         )
 
-    print(
-        f"threshold="
-        f"{threshold_debug:.4f} | "
-        f"predicted attack="
-        f"{positive_rate:.4f}"
-    )
+        print(
+            f"threshold="
+            f"{threshold_debug:.4f} | "
+            f"predicted attack="
+            f"{positive_rate:.4f}"
+        )
 
     output_dir = (
         PROJECT_DIR
@@ -619,7 +730,7 @@ def main():
 
     result_name = (
         f"unsw_to_cicids_mmd_{args.version}_seed{seed}.json"
-        if args.version in ("v1", "v2")
+        if args.version in ("v1", "v2", "v3", "v4")
         else f"unsw_to_cicids_mmd_seed{seed}.json"
     )
     output_path = output_dir / result_name
