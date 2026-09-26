@@ -18,6 +18,7 @@ from training.baseline import make_loader
 from evaluation.baseline import (
     collect_scores,
     compute_metrics,
+    select_f1_threshold,
 )
 
 
@@ -660,6 +661,18 @@ def main():
         scores,
         threshold,
     )
+
+    # Target-label oracle is development-only; never save it as reported metrics.
+    if args.phase == "development":
+        oracle_threshold = select_f1_threshold(labels, scores)
+        oracle_metrics = compute_metrics(labels, scores, oracle_threshold)
+        print(
+            "DEV ORACLE ONLY | "
+            f"threshold={oracle_threshold:.6f} | "
+            f"F1={oracle_metrics['f1']:.6f} | "
+            f"Recall={oracle_metrics['recall']:.6f} | "
+            f"FPR={oracle_metrics['fpr']:.6f}"
+        )
 
     # ======================================================
     # Save
