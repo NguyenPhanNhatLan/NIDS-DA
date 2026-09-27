@@ -1,0 +1,16 @@
+{
+  "sweep_id": "hda_v5a_lambda_0p10_seed43",
+  "parent_protocol": "configs/hda_thesis_protocol.json",
+  "evaluation_revision": "configs/hda_evaluation_v2.json",
+  "reference": "configs/hda_v4_development_reference.json",
+  "adaptation_seed": 43,
+  "lambda_conditional": [
+    0.1
+  ],
+  "output_dir": "results/thesis/hda_v5a_lambda_0p10_seed43",
+  "code_sha256": {
+    "src/training/hda_v5a.py": "09ec667301850f0c02b414e86abe7898ceff90b0bf4d2b9100104558f71c992e",
+    "src/training/baseline.py": "e3de619c5b682822c9a3aaa291bf19b595c988e856c3ea00dfb848bc3d786016",
+    "src/models/target_encoder.py": "0ec9e64b2f507ea7294f5d1f8fa52c5b78c3e49c0bbabb44df7b943c3d587e47"
+  }
+}

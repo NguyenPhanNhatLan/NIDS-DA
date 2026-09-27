@@ -1,0 +1,47 @@
+{
+  "experiment_id": "hda_v6_development",
+  "source_seed": 42,
+  "development_seeds": [42, 43, 44],
+  "source_train": "data/features/unsw_train",
+  "source_validation": "data/features/unsw_val",
+  "target_train": "data/features/cicids_train",
+  "target_development": "data/features/cicids_test",
+  "teacher_dir": "models/thesis/hda_thesis_v2_fixed_source/hda",
+  "teacher_protocol": "configs/hda_thesis_protocol.json",
+  "checkpoint_dir": "models/hda_v6",
+  "result_dir": "results/hda_v6/development",
+  "batch_size": 256,
+  "class_batch_size": 64,
+  "source_epochs": 50,
+  "source_patience": 7,
+  "warmup_epochs": 10,
+  "adaptation_epochs": 10,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "variants": {
+    "v6a": {
+      "architecture": "plain",
+      "train_shared": false,
+      "source_ce": 0.0,
+      "marginal": 1.0,
+      "normal": 0.05,
+      "attack": 0.05
+    },
+    "v6b": {
+      "architecture": "residual",
+      "train_shared": false,
+      "source_ce": 0.0,
+      "marginal": 1.0,
+      "normal": 0.05,
+      "attack": 0.05
+    },
+    "v6c": {
+      "architecture": "residual",
+      "train_shared": true,
+      "source_ce": 1.0,
+      "marginal": 0.10,
+      "normal": 0.05,
+      "attack": 0.02
+    }
+  }
+}
