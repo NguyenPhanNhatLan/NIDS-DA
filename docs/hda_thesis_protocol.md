@@ -52,6 +52,56 @@ on that train only and retrain both v2 and v4 under a new, finalized protocol ha
 
 ## Commands
 
+### Frozen V4 development reference and purity revision
+
+All V5 development comparisons must use
+`configs/hda_v4_development_reference.json`: AP=0.5861, ROC-AUC=0.6828,
+F1=0.5375, Recall=0.3821, FPR=0.0081. Oracle F1=0.5960 is diagnostic only.
+These are user-supplied rounded results, not a newly recomputed run or a frozen
+checkpoint artifact. Do not replace this reference with later V4 results.
+
+The current evaluation code requires revision v2 (v1 remains the historical
+manifest for its prior code snapshot):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m evaluation.hda \
+  --protocol configs/hda_thesis_protocol.json \
+  --evaluation-revision configs/hda_evaluation_v2.json \
+  --phase development --version v4 --adaptation-seed 42
+```
+
+The console purity table uses development labels and development margin quantiles
+only. It does not measure actual adaptation-train pool purity, whose labels remain
+unused. Equal margins stay together; empty bands print N/A and the maximum is
+included in the last band. No purity values feed training or reported metrics.
+Results are saved under the `hda_eval_v2_purity` evaluation subdirectory.
+
+### Evaluation-only revision (existing checkpoints)
+
+The original training protocol and checkpoint metadata remain unchanged.
+`configs/hda_evaluation_v1.json` binds the updated HDA evaluation entry point to
+the original protocol SHA-256. The revision loader verifies every original code
+hash except `src/evaluation/hda.py`, whose replacement hash is explicitly pinned
+along with the revision loader. Training, model, preprocessing, baseline metrics,
+and original protocol-loader code must still match the frozen snapshot.
+Without `--evaluation-revision`, the original strict loader remains in effect.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m evaluation.hda \
+  --protocol configs/hda_thesis_protocol.json \
+  --evaluation-revision configs/hda_evaluation_v1.json \
+  --phase development --version v4 --adaptation-seed 42
+```
+
+This reuses checkpoints carrying the original protocol hash, including the v2
+teacher required by v4 diagnostics. Results go into an `hda_eval_v1_dev_oracle`
+subdirectory of the usual phase/HDA result directory and record the evaluation
+revision hash and code hashes. Oracle values are console-only, development-only,
+and never replace source-threshold metrics. The existing `cicids_test` is explicitly
+development data in this protocol; no untouched final holdout has been created.
+Further evaluation edits require a new reviewed revision manifest. Changes to
+training or data roles still require a new training protocol and matching checkpoints.
+
 Retraining uses a new `hda_thesis_v2_fixed_source` checkpoint namespace. Previous
 protocol checkpoints are preserved and have a different protocol hash. The
 current development roles support an internal evaluation, not an untouched test.

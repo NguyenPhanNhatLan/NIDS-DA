@@ -204,8 +204,29 @@ def diagnose_margin_bands(labels, margins):
         )
 
 
-def diagnose_logits(model, loader, rank_enrichment=False):
+def diagnose_pseudo_label_purity(labels, logits):
+    """Development labels only; describe margin bands without training feedback."""
+    margins = logits[:, 1] - logits[:, 0]
+    boundaries = [0, 2, 5, 25, 50, 75, 95, 98, 100]
+    quantiles = np.quantile(margins, np.array(boundaries) / 100)
+    print("\n--- PSEUDO-LABEL PURITY DIAGNOSTIC (DEV ONLY) ---")
+    print("Margin percentile | samples | true Normal | true Attack | attack purity")
+    print("Development margin quantiles; ties stay together, so band sizes may differ.")
+    for index, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:])):
+        low, high = quantiles[index:index + 2]
+        upper = margins <= high if end == 100 else margins < high
+        region_labels = labels[(margins >= low) & upper]
+        count = len(region_labels)
+        normal_count = int((region_labels == 0).sum())
+        attack_count = int((region_labels == 1).sum())
+        purity = f"{attack_count / count:.4f}" if count else "N/A"
+        print(f"{start}-{end}% | {count} | {normal_count} | {attack_count} | {purity}")
+
+
+def diagnose_logits(model, loader, rank_enrichment=False, pseudo_label_purity=False):
     labels, logits = collect_logits_and_labels(model, loader)
+    if pseudo_label_purity:
+        diagnose_pseudo_label_purity(labels, logits)
     normal_logit = logits[:, 0]
     attack_logit = logits[:, 1]
     margin = attack_logit - normal_logit
@@ -452,19 +473,30 @@ def main():
         default="v0",
     )
     parser.add_argument("--protocol", default=None)
+    parser.add_argument("--evaluation-revision", default=None,
+                        help="Evaluation revision manifest bound to the original training protocol.")
     parser.add_argument("--phase", choices=["development", "final"], default="development")
 
     args = parser.parse_args()
+    if args.evaluation_revision is not None and args.protocol is None:
+        parser.error("--evaluation-revision requires --protocol")
 
     seed = args.seed
     protocol = None
     protocol_hash = None
+    evaluation_metadata = None
     checkpoint_dir = MODEL_DIR / "hda"
     target_test_path = FEATURE_DIR / "cicids_test"
     output_dir = PROJECT_DIR / "results" / "hda"
     if args.protocol is not None:
         from training.thesis_protocol import load_protocol, resolve_path, evaluation_target
-        protocol, protocol_hash = load_protocol(args.protocol)
+        if args.evaluation_revision is None:
+            protocol, protocol_hash = load_protocol(args.protocol)
+        else:
+            from evaluation.protocol_revision import load_evaluation_revision
+            protocol, protocol_hash, evaluation_metadata = load_evaluation_revision(
+                args.protocol, args.evaluation_revision
+            )
         if args.version not in protocol["methods"]:
             raise ValueError("Version không nằm trong frozen thesis protocol.")
         allowed_seeds = protocol["final_seeds"] if args.phase == "final" else protocol["development_seeds"]
@@ -473,6 +505,8 @@ def main():
         target_test_path = evaluation_target(protocol, args.phase)
         checkpoint_dir = resolve_path(protocol["checkpoint_dir"])
         output_dir = resolve_path(protocol["result_dir"]) / args.phase / "hda"
+        if evaluation_metadata is not None:
+            output_dir = output_dir / evaluation_metadata["evaluation_id"]
     elif args.phase == "final":
         raise ValueError("Final evaluation yêu cầu --protocol với holdout đã xác nhận.")
 
@@ -577,7 +611,11 @@ def main():
         test_loader,
     )
     diagnose_batch_norm(target_model, test_loader)
-    diagnose_logits(target_model, test_loader, rank_enrichment=args.version in ("v2", "v4"))
+    diagnose_logits(
+        target_model, test_loader,
+        rank_enrichment=args.version in ("v2", "v4"),
+        pseudo_label_purity=protocol is not None and args.phase == "development",
+    )
 
     source_loader = make_loader(
         FEATURE_DIR / "unsw_test",
@@ -662,17 +700,24 @@ def main():
         threshold,
     )
 
-    # Target-label oracle is development-only; never save it as reported metrics.
+    # Only an explicit protocol selects a development split; legacy uses test.
+    # Never save the target-label oracle as reported metrics.
     if args.phase == "development":
-        oracle_threshold = select_f1_threshold(labels, scores)
-        oracle_metrics = compute_metrics(labels, scores, oracle_threshold)
-        print(
-            "DEV ORACLE ONLY | "
-            f"threshold={oracle_threshold:.6f} | "
-            f"F1={oracle_metrics['f1']:.6f} | "
-            f"Recall={oracle_metrics['recall']:.6f} | "
-            f"FPR={oracle_metrics['fpr']:.6f}"
-        )
+        if protocol is None:
+            print(
+                "DEV ORACLE skipped: "
+                "requires an explicit development split."
+            )
+        else:
+            oracle_threshold = select_f1_threshold(labels, scores)
+            oracle_metrics = compute_metrics(labels, scores, oracle_threshold)
+            print(
+                "DEV ORACLE ONLY | "
+                f"threshold={oracle_threshold:.6f} | "
+                f"F1={oracle_metrics['f1']:.6f} | "
+                f"Recall={oracle_metrics['recall']:.6f} | "
+                f"FPR={oracle_metrics['fpr']:.6f}"
+            )
 
     # ======================================================
     # Save
@@ -716,6 +761,8 @@ def main():
                       phase=args.phase, target_data=str(target_test_path))
     else:
         result["phase"] = "legacy_development"
+    if evaluation_metadata is not None:
+        result.update(evaluation_metadata)
     
     normal_scores = scores[
     labels == 0
