@@ -9,9 +9,10 @@ from torch import nn
 from models.baseline import BaselineMLP
 from models.hda_v1 import HDAV1Model
 from models.hda_v6 import HDAV6Model
-from training.adaptation import make_unlabeled_loader, mmd_loss
-from training.baseline import make_loader, set_seed, train_baseline
-from training.hda_v4 import build_pseudo_pools, make_teacher_loader, sample_pool
+from training.adaptation import mmd_loss
+from training.baseline import set_seed, train_baseline
+from training.hda_v4 import build_pseudo_pools, sample_pool
+from training.v6_data import make_loader, make_teacher_loader, make_unlabeled_loader
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ def code_hashes():
         "src/models/hda_v6.py", "src/training/hda_v6.py",
         "src/training/baseline.py", "src/training/adaptation.py",
         "src/training/hda_v4.py", "src/models/baseline.py",
-        "src/models/hda_v1.py", "src/evaluation/baseline.py",
+        "src/models/hda_v1.py", "src/evaluation/baseline.py", "src/training/v6_data.py",
     ]
     return {name: file_hash(ROOT / name) for name in files}
 
@@ -59,8 +60,13 @@ def load_checkpoint(path, config_hash):
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     if checkpoint["config_sha256"] != config_hash:
         raise ValueError(f"Checkpoint config mismatch: {path}")
-    if checkpoint["code_sha256"] != code_hashes():
-        raise ValueError(f"Checkpoint code mismatch: {path}")
+    current_hashes = code_hashes()
+    if checkpoint["code_sha256"] != current_hashes:
+        revision_path = ROOT / "configs/hda_v6_loader_revision.json"
+        revision = json.loads(revision_path.read_text())
+        if (revision["current_code_sha256"] != current_hashes
+                or checkpoint["code_sha256"] != revision["previous_code_sha256"]):
+            raise ValueError(f"Checkpoint code mismatch: {path}")
     return checkpoint
 
 
@@ -106,25 +112,34 @@ def load_teacher(config, seed, source_dim, target_dim, device):
 def configure_training(model, train_shared):
     model.eval()
     for parameter in model.parameters():
-        parameter.requires_grad = train_shared
+        parameter.requires_grad = False
     for parameter in model.target_stem.parameters():
         parameter.requires_grad = True
+    model.target_stem.train()
     if train_shared:
-        model.train()
-    else:
-        model.target_stem.train()
+        for parameter in model.encoder.parameters():
+            parameter.requires_grad = True
+        model.encoder.train()
 
 
 def train_alignment(model, source_loader, target_loader, settings, epochs, lr,
                     weight_decay, class_batch_size=64, source_pools=None,
-                    target_pools=None):
+                    target_pools=None, source_counts=None, shared_lr=1e-4):
     device = next(model.parameters()).device
     configure_training(model, settings["train_shared"])
-    optimizer = torch.optim.Adam(
-        [parameter for parameter in model.parameters() if parameter.requires_grad],
-        lr=lr, weight_decay=weight_decay,
-    )
-    criterion = nn.CrossEntropyLoss()
+    parameter_groups = [{"params": model.target_stem.parameters(), "lr": lr}]
+    if settings["train_shared"]:
+        parameter_groups.append({"params": model.encoder.parameters(), "lr": shared_lr})
+    optimizer = torch.optim.Adam(parameter_groups, weight_decay=weight_decay)
+    criterion = None
+    if settings["source_ce"] > 0:
+        if source_counts is None:
+            raise ValueError("Source CE requires source training class counts")
+        counts = torch.tensor(source_counts, dtype=torch.float32, device=device)
+        if counts.shape != (2,) or not torch.isfinite(counts).all() or (counts <= 0).any():
+            raise ValueError("Source class counts must contain two positive finite values")
+        class_weights = counts.sum() / (2 * counts)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
     history = []
     conditional = settings["normal"] > 0 or settings["attack"] > 0
     if conditional and (source_pools is None or target_pools is None):
@@ -270,8 +285,15 @@ def main():
             model, source_loader, target_loader, settings, epochs,
             config["learning_rate"], config["weight_decay"], config["class_batch_size"],
             source_pools, target_pools,
+            source_counts=[source_metadata["class_counts"]["0"], source_metadata["class_counts"]["1"]],
+            shared_lr=config["shared_learning_rate"],
         )
-        metadata.update(history=history, loss_weights=settings)
+        metadata.update(
+            history=history, loss_weights=settings,
+            target_learning_rate=config["learning_rate"],
+            shared_learning_rate=config["shared_learning_rate"] if settings["train_shared"] else None,
+            source_class_counts=[source_metadata["class_counts"]["0"], source_metadata["class_counts"]["1"]],
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({**metadata, "model_state_dict": model.cpu().state_dict()}, output)
     print(f"Saved: {output}")

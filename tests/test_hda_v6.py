@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -54,7 +55,7 @@ class HDAV6Tests(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     history = train_alignment(
                         model, source_batches, target_batches, settings, 1, 0.001, 0.0001,
-                        4, source_pools, target_pools,
+                        4, source_pools, target_pools, source_counts=[90, 10],
                     )
                 row = history[0]
                 expected = sum(settings[name] * row[name] for name in ("source_ce", "marginal", "normal", "attack"))
@@ -62,8 +63,46 @@ class HDAV6Tests(unittest.TestCase):
                 for module in ("source_stem", "target_stem", "encoder", "classifier"):
                     changed = any(not torch.equal(value, model.state_dict()[key])
                                   for key, value in before.items() if key.startswith(module + "."))
-                    self.assertEqual(changed, settings["train_shared"] or module == "target_stem")
+                    expected_change = module == "target_stem" or (settings["train_shared"] and module == "encoder")
+                    self.assertEqual(changed, expected_change)
                 self.assertEqual(row["source_ce"] > 0, version == "v6c")
+
+    def test_weighted_ce_anchor_and_learning_rates(self):
+        set_seed(42)
+        model = HDAV6Model(4, 3)
+        configure_training(model, True)
+        self.assertFalse(model.source_stem.training)
+        self.assertFalse(model.classifier.training)
+        self.assertTrue(model.target_stem.training)
+        self.assertTrue(model.encoder.training)
+        before = {key: value.clone() for key, value in model.state_dict().items()}
+        settings = {"train_shared": True, "source_ce": 1.0,
+                    "marginal": 0.0, "normal": 0.0, "attack": 0.0}
+        source_loader = [(torch.randn(8, 4), torch.tensor([0, 1] * 4))]
+        target_loader = [torch.randn(8, 3)]
+        with patch("training.hda_v6.nn.CrossEntropyLoss", wraps=nn.CrossEntropyLoss) as criterion, \
+                patch("training.hda_v6.torch.optim.Adam", wraps=torch.optim.Adam) as optimizer, \
+                contextlib.redirect_stdout(io.StringIO()):
+            train_alignment(model, source_loader, target_loader, settings, 1, 0.001, 0.0001,
+                            source_counts=[90, 10], shared_lr=0.0001)
+        torch.testing.assert_close(criterion.call_args.kwargs["weight"], torch.tensor([100 / 180, 5.0]))
+        groups = optimizer.call_args.args[0]
+        self.assertEqual([group["lr"] for group in groups], [0.001, 0.0001])
+        self.assertTrue(any(not torch.equal(value, model.state_dict()[key])
+                            for key, value in before.items() if key.startswith("encoder.")))
+        for name in ("source_stem", "classifier"):
+            for key, value in before.items():
+                if key.startswith(name + "."):
+                    torch.testing.assert_close(model.state_dict()[key], value, rtol=0, atol=0)
+            self.assertTrue(all(parameter.grad is None for parameter in getattr(model, name).parameters()))
+
+    def test_source_ce_requires_valid_counts(self):
+        settings = {"train_shared": True, "source_ce": 1.0,
+                    "marginal": 0.1, "normal": 0.0, "attack": 0.0}
+        for counts in (None, [10, 0], [10], [10, float("nan")]):
+            with self.subTest(counts=counts), self.assertRaises(ValueError):
+                train_alignment(HDAV6Model(4, 3), [], [], settings, 1, 0.001, 0.0001,
+                                source_counts=counts)
 
     def test_target_training_without_label_column(self):
         with tempfile.TemporaryDirectory() as directory:

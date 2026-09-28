@@ -1,10 +1,26 @@
 # HDA V6 development
 
+V6 training now uses `src/training/v6_data.py` to convert Arrow arrays directly
+to NumPy and yield complete tensor batches. It avoids Python lists per feature
+and per-row collation. Chunk size, file/row shuffling, batch boundaries, final
+partial-batch behavior, and RNG consumption match the previous loaders. Target
+training still reads only the features column. Losses, batch size, epochs, and
+pseudo-pool rules are unchanged. Existing commands below work as before.
+
+On this machine, a loader-only benchmark of 32,768 rows (median of three runs)
+took 0.373s → 0.025s for UNSW and 0.159s → 0.009s for CICIDS. This is not a
+measurement of total training speed; neural-network computation is unchanged.
+The optimization takes effect in newly started processes.
+
+`configs/hda_v6_loader_revision.json` pins the exact previous and current code
+snapshots so existing V6 checkpoints can be reused without removing hash checks.
+Other code snapshots and mismatched configs are still rejected.
+
 | Version | Architecture | Parameters trained during adaptation | Loss |
 | --- | --- | --- | --- |
 | V6a | Existing widths, BN replaced by LN, latent 168D | Target stem | marginal + 0.05 normal + 0.05 attack |
 | V6b | Two residual blocks + LN, latent 128D | Target stem | marginal + 0.05 normal + 0.05 attack |
-| V6c | Same as V6b | Both stems, shared encoder, classifier | source CE + 0.10 marginal + 0.05 normal + 0.02 attack |
+| V6c | Same as V6b | Target stem and shared encoder | weighted source CE + 0.10 marginal + 0.05 normal + 0.02 attack |
 
 V6a/b retain V5a's conditional weight 0.10 because
 `0.10 * (normal + attack) / 2 = 0.05 normal + 0.05 attack`.
@@ -29,7 +45,11 @@ for 10 epochs using hidden 256D marginal MMD. Adaptation then runs for 10 epochs
 and selects the last epoch. V6b/c share the exact same source and warmup checkpoint.
 All alignment terms use the existing single-RBF MMD; conditional terms operate
 on current latent vectors. V6c recomputes source latents with the current trainable
-encoder rather than caching old latents. Its source CE is ordinary, unweighted CE.
+encoder rather than caching old latents. Its source CE uses source-training class
+weights `sum(counts) / (2 * counts)`, as in source pretraining. The source stem
+and classifier remain frozen in eval mode; CE gradients still pass through the
+classifier into the shared encoder. Adam uses learning rate 0.001 for the target
+stem and 0.0001 for the shared encoder, with weight decay 0.0001.
 
 Target pseudo pools retain the old same-seed V2 teacher and its rules:
 Normal `margin <= q02`; Attack `q95 <= margin < q98`. Teacher scores come only
@@ -72,8 +92,8 @@ Results: `results/hda_v6/development/`.
 ## Evaluation
 
 After adaptation, select the decision threshold on UNSW validation using the
-final model's source branch. This is necessary because V6c updates the encoder
-and classifier. The historical UNSW BN-model threshold is not reused.
+final model's source branch. This is necessary because V6c updates the shared
+encoder. The historical UNSW BN-model threshold is not reused.
 Then evaluate the explicitly configured target development split. Target labels
 are never read by training. Purity and oracle metrics print only as diagnostics;
 oracle values are not saved as primary metrics. JSON results contain deltas

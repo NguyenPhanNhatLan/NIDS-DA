@@ -1,0 +1,25 @@
+{
+  "revision_id": "v6_batched_parquet_v1",
+  "description": "Arrow to NumPy conversion and prebatched iteration; identical row order and batch boundaries.",
+  "previous_code_sha256": {
+    "src/models/hda_v6.py": "1165c5dcd9daf940cd60fa6ddb9827ca65eecedc985c7b0ff719379ff3d14a94",
+    "src/training/hda_v6.py": "bab93a9c28d0595f9858823624e502155a5b8ac2b4dea1f65d8d532c3e3ead2f",
+    "src/training/baseline.py": "e3de619c5b682822c9a3aaa291bf19b595c988e856c3ea00dfb848bc3d786016",
+    "src/training/adaptation.py": "065f8a36156038a7d161b7322d33ddba963e21b140ed3fdaad264e5729f94184",
+    "src/training/hda_v4.py": "fea5ffab8d296e796c75f130a0afb7f646d14f674c17fae92fe165722a521953",
+    "src/models/baseline.py": "5053c25559896e416dd1c579d80b3311a1c9a01d683a70c3fcfa430fd5cc6234",
+    "src/models/hda_v1.py": "4bcb529be8b4c22e1ef9122a5935e3168f4438e28145c751d79dccf5e2cc0264",
+    "src/evaluation/baseline.py": "138464534d8a24535d100cfe43bf863b884ac4a4acb4c96841dd9275ab87fb14"
+  },
+  "current_code_sha256": {
+    "src/models/hda_v6.py": "1165c5dcd9daf940cd60fa6ddb9827ca65eecedc985c7b0ff719379ff3d14a94",
+    "src/training/hda_v6.py": "6beefbbad023561875c81183e7fbf40011ea954b295e773d9ba1da1e28486f3f",
+    "src/training/baseline.py": "e3de619c5b682822c9a3aaa291bf19b595c988e856c3ea00dfb848bc3d786016",
+    "src/training/adaptation.py": "065f8a36156038a7d161b7322d33ddba963e21b140ed3fdaad264e5729f94184",
+    "src/training/hda_v4.py": "fea5ffab8d296e796c75f130a0afb7f646d14f674c17fae92fe165722a521953",
+    "src/models/baseline.py": "5053c25559896e416dd1c579d80b3311a1c9a01d683a70c3fcfa430fd5cc6234",
+    "src/models/hda_v1.py": "4bcb529be8b4c22e1ef9122a5935e3168f4438e28145c751d79dccf5e2cc0264",
+    "src/evaluation/baseline.py": "138464534d8a24535d100cfe43bf863b884ac4a4acb4c96841dd9275ab87fb14",
+    "src/training/v6_data.py": "9830ff2d61b6d742e324fc1da850d9391ddc67fa53881e062c46242f6415b477"
+  }
+}
