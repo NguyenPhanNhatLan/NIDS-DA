@@ -19,7 +19,7 @@ class ResidualHDATests(unittest.TestCase):
         student = ResidualHDAModel(source, teacher.adapter)
         return teacher, student
 
-    def test_zero_alpha_matches_v2_and_frozen_modes(self):
+    def test_zero_residual_matches_v2_and_frozen_modes(self):
         teacher, model = self.make_models()
         features = torch.randn(16, 3)
         expected = teacher(features)
@@ -33,11 +33,16 @@ class ResidualHDATests(unittest.TestCase):
         for name, parameter in model.named_parameters():
             self.assertEqual(parameter.requires_grad, name.startswith("correction."))
 
-    def test_zero_alpha_first_gradient(self):
+    def test_zero_final_layer_first_gradient(self):
         correction = ResidualTargetCorrection()
+        self.assertEqual(correction.alpha.item(), 1.0)
+        self.assertEqual(correction.block[-1].weight.count_nonzero().item(), 0)
+        self.assertEqual(correction.block[-1].bias.count_nonzero().item(), 0)
         correction(torch.randn(8, 256)).square().sum().backward()
-        self.assertGreater(abs(correction.alpha.grad.item()), 0)
-        for parameter in correction.block.parameters():
+        self.assertEqual(correction.alpha.grad.item(), 0)
+        self.assertGreater(correction.block[-1].weight.grad.abs().sum().item(), 0)
+        self.assertGreater(correction.block[-1].bias.grad.abs().sum().item(), 0)
+        for parameter in correction.block[:-1].parameters():
             self.assertEqual(parameter.grad.abs().sum().item(), 0)
 
     def test_training_changes_only_correction(self):

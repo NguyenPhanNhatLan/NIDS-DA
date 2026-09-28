@@ -13,10 +13,11 @@ frozen source `fc2 → BN2 → ReLU` and classifier. Latent width remains 168.
 All source layers and V2 adapter parameters and BN buffers stay frozen in eval
 mode. Only the correction is in train mode.
 
-`alpha` is a trainable scalar initialized to zero, so initial predictions match
-V2 exactly. Initially the data gradient updates alpha; gradients into the residual
-block become active when alpha moves away from zero. The scalar is unconstrained,
-as in the requested architecture.
+`alpha` is a trainable scalar initialized to one. The final residual Linear layer
+has zero-initialized weight and bias, so initial predictions still match V2 exactly.
+On the first backward pass, the data gradient reaches the final Linear layer;
+alpha and earlier correction layers initially have zero data gradients. Earlier
+layers can learn once the final layer moves away from zero. Alpha is unconstrained.
 
 ## First experiment
 
@@ -32,6 +33,26 @@ is the starting point. V6a/b/c remain separate experiments.
 
 ## Optional follow-up
 
+For the V5b rank-weight 0.10 ablation, run the symmetric configuration first:
+
+```bash
+PYTHONPATH=src .venv/bin/python -u -m training.hda_residual --config configs/hda_v5b_rank_0p10_symmetric.json --mode rank --seed 42
+PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_residual --config configs/hda_v5b_rank_0p10_symmetric.json --mode rank --seed 42
+```
+
+Its loss is `hidden + 0.05 Normal + 0.05 Attack + 0.10 rank`.
+Then change only the Attack coefficient to 0.02 in a separate experiment:
+
+```bash
+PYTHONPATH=src .venv/bin/python -u -m training.hda_residual --config configs/hda_v5b_rank_0p10_asymmetric.json --mode rank --seed 42
+PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_residual --config configs/hda_v5b_rank_0p10_asymmetric.json --mode rank --seed 42
+```
+
+Both retain the same architecture, alpha-one/zero-final-layer initialization,
+seed, teacher, pseudo-pool rules and training settings. They start independently
+from V2, and use separate checkpoint/result directories. The original config
+below retains the earlier rank-weight 0.01 experiment.
+
 After comparing the base run with V5a, run the separate rank variant:
 
 ```bash
@@ -46,7 +67,8 @@ has undefined correlation, so that batch contributes zero rank loss. Student
 norm is clamped for numerical stability. This measures linear association of
 margins; it does not guarantee unchanged ROC-AUC. This variant changes both the
 Attack weight and the rank term, so its difference from base is not a rank-only
-ablation. Both modes start from V2 with alpha zero, not from each other's output.
+ablation. Both modes start from V2 with alpha one and a zero residual output,
+not from each other's output.
 
 ## Data and outputs
 

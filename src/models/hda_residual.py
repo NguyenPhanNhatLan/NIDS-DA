@@ -14,7 +14,9 @@ class ResidualTargetCorrection(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(128, dim),
         )
-        self.alpha = nn.Parameter(torch.tensor(0.0))
+        nn.init.zeros_(self.block[-1].weight)
+        nn.init.zeros_(self.block[-1].bias)
+        self.alpha = nn.Parameter(torch.tensor(1.0))
 
     def forward(self, hidden):
         return hidden + self.alpha * self.block(hidden)

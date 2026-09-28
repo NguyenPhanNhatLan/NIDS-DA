@@ -1,0 +1,21 @@
+{
+  "experiment_id": "hda_v5b_rank_0p10_symmetric",
+  "parent_protocol": "configs/hda_thesis_protocol.json",
+  "evaluation_revision": "configs/hda_evaluation_v2.json",
+  "checkpoint_dir": "models/hda_v5b_rank_0p10_symmetric",
+  "result_dir": "results/hda_v5b_rank_0p10_symmetric/development",
+  "losses": {
+    "base": {
+      "hidden": 1.0,
+      "normal": 0.05,
+      "attack": 0.05,
+      "rank": 0.0
+    },
+    "rank": {
+      "hidden": 1.0,
+      "normal": 0.05,
+      "attack": 0.05,
+      "rank": 0.1
+    }
+  }
+}
