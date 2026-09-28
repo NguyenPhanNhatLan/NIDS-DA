@@ -33,25 +33,8 @@ is the starting point. V6a/b/c remain separate experiments.
 
 ## Optional follow-up
 
-For the V5b rank-weight 0.10 ablation, run the symmetric configuration first:
-
-```bash
-PYTHONPATH=src .venv/bin/python -u -m training.hda_residual --config configs/hda_v5b_rank_0p10_symmetric.json --mode rank --seed 42
-PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_residual --config configs/hda_v5b_rank_0p10_symmetric.json --mode rank --seed 42
-```
-
-Its loss is `hidden + 0.05 Normal + 0.05 Attack + 0.10 rank`.
-Then change only the Attack coefficient to 0.02 in a separate experiment:
-
-```bash
-PYTHONPATH=src .venv/bin/python -u -m training.hda_residual --config configs/hda_v5b_rank_0p10_asymmetric.json --mode rank --seed 42
-PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_residual --config configs/hda_v5b_rank_0p10_asymmetric.json --mode rank --seed 42
-```
-
-Both retain the same architecture, alpha-one/zero-final-layer initialization,
-seed, teacher, pseudo-pool rules and training settings. They start independently
-from V2, and use separate checkpoint/result directories. The original config
-below retains the earlier rank-weight 0.01 experiment.
+V5b is a separate HDAV1Model adapter experiment, not this residual architecture.
+Use `training.hda_v5b` and `evaluation.hda_v5b` as documented in `docs/hda_v5b.md`.
 
 After comparing the base run with V5a, run the separate rank variant:
 
