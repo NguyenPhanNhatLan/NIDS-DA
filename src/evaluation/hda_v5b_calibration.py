@@ -16,7 +16,9 @@ from training.v6_data import make_loader, make_teacher_loader
 
 def calibration_code_hashes():
     files = ("src/evaluation/calibration.py", "src/evaluation/hda_v5b_calibration.py",
-             "src/evaluation/baseline.py", "src/training/v6_data.py")
+             "src/evaluation/baseline.py", "src/training/v6_data.py",
+             "src/training/hda_v4.py", "src/training/hda_v5b.py",
+             "src/models/hda_v1.py", "src/models/baseline.py")
     return {name: file_hash(ROOT / name) for name in files}
 
 
