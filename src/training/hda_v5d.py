@@ -122,23 +122,29 @@ def train_model(student, teacher, source_loader, target_loader, source_pools,
                     raise ValueError("Empty source loader") from None
             source_x, source_y, target_x = source_x.to(device), source_y.to(device), target_x.to(device)
             source_h, source_z = student.source_representations(source_x)
-            target_h = student.adapter(target_x)
-            target_z = student.shared_latent(target_h)
-            source_logits = student.classifier(source_z)
-            target_logits = student.classifier(target_z)
-            source_ce = F.cross_entropy(source_logits, source_y, weight=class_weights)
-            hidden, _ = mmd_loss(source_h, target_h)
-            balanced_x = torch.cat([sample_pool(target_pools[k], n, device) for k in (0, 1)])
-            with student.balanced_adapter_batch():
-                balanced_z = student.shared_latent(student.adapter(balanced_x))
-            normal, _ = mmd_loss(sample_pool(source_pools[0], n, device), balanced_z[:n])
-            attack, _ = mmd_loss(sample_pool(source_pools[1], n, device), balanced_z[n:])
-            with torch.no_grad():
-                _, teacher_logits = teacher(target_x)
-            rank = ranking_loss(teacher_logits[:, 1] - teacher_logits[:, 0],
-                                target_logits[:, 1] - target_logits[:, 0])
-            terms = {"hidden": hidden, "normal": normal, "attack": attack,
-                     "rank": rank, "source": source_ce}
+            terms = {k: torch.zeros((), device=device) for k in weights}
+            if weights["source"] > 0:
+                terms["source"] = F.cross_entropy(student.classifier(source_z), source_y, weight=class_weights)
+            # Joint training retains one natural-batch BN update. A frozen adapter
+            # needs no forward at all when both hidden MMD and ranking are disabled.
+            if not student.classifier_only or weights["hidden"] > 0 or weights["rank"] > 0:
+                target_h = student.adapter(target_x)
+            if weights["hidden"] > 0:
+                terms["hidden"], _ = mmd_loss(source_h, target_h)
+            if weights["normal"] > 0 or weights["attack"] > 0:
+                balanced_x = torch.cat([sample_pool(target_pools[k], n, device) for k in (0, 1)])
+                with student.balanced_adapter_batch():
+                    balanced_z = student.shared_latent(student.adapter(balanced_x))
+                if weights["normal"] > 0:
+                    terms["normal"], _ = mmd_loss(sample_pool(source_pools[0], n, device), balanced_z[:n])
+                if weights["attack"] > 0:
+                    terms["attack"], _ = mmd_loss(sample_pool(source_pools[1], n, device), balanced_z[n:])
+            if weights["rank"] > 0:
+                target_logits = student.classifier(student.shared_latent(target_h))
+                with torch.no_grad():
+                    _, teacher_logits = teacher(target_x)
+                terms["rank"] = ranking_loss(teacher_logits[:, 1] - teacher_logits[:, 0],
+                                             target_logits[:, 1] - target_logits[:, 0])
             loss = sum(weights[k] * value for k, value in terms.items())
             if not torch.isfinite(loss):
                 raise ValueError("V5d loss contains NaN/Inf")
@@ -157,8 +163,23 @@ def train_model(student, teacher, source_loader, target_loader, source_pools,
     return history
 
 
+def preflight(config_path, training_seed=None):
+    # Local import avoids a module-level cycle with the evaluation entry point.
+    from evaluation.hda_v5d import load_v5b_calibration
+
+    context = load_context(config_path, training_seed)
+    config, protocol, provenance, *_ = context
+    load_v5b_calibration(config, protocol, provenance)
+    print("Stage 1 checkpoint: VERIFIED", flush=True)
+    print("V5b calibration: VERIFIED", flush=True)
+    for name in ("teacher_seed", "training_seed", "classifier_only", "calibration_max_fpr"):
+        print(f"{name}: {config[name]}", flush=True)
+    return context
+
+
 def run(config_path, device_name="auto", training_seed=None):
-    config, protocol, provenance, source, v2, teacher = load_context(config_path, training_seed)
+    config, protocol, provenance, source, v2, teacher = preflight(config_path, training_seed)
+    calibration_hash = file_hash(resolve_path(config["v5b_calibration"]))
     output = checkpoint_path(config)
     if output.exists():
         raise FileExistsError(f"Checkpoint already exists: {output}")
@@ -174,31 +195,40 @@ def run(config_path, device_name="auto", training_seed=None):
         raise ValueError("UNSW metadata dimension mismatch")
     counts = [int(metadata["class_counts"][str(k)]) for k in (0, 1)]
     class_weights = baseline_class_weights(counts)
-    normal, attack, pseudo = build_frozen_target_pools(v2, protocol, provenance["target_dim"], batch_size)
+    needs_conditional = any(config["loss_weights"][k] > 0 for k in ("normal", "attack"))
+    target_pools = None
+    pseudo = {"used_for_training": False}
+    if needs_conditional:
+        normal, attack, pseudo = build_frozen_target_pools(v2, protocol, provenance["target_dim"], batch_size)
+        target_pools = {0: normal, 1: attack}
     device = torch.device(("cuda" if torch.cuda.is_available() else
                            "mps" if torch.backends.mps.is_available() else "cpu")
                           if device_name == "auto" else device_name)
     student = HDAV5DModel(source, teacher.adapter, classifier_only=config["classifier_only"]).to(device)
     source.to(device)
     teacher.to(device)
-    source_pools = build_source_pools(source, make_loader(source_path, provenance["source_dim"], batch_size), device)
+    source_pools = None
+    if needs_conditional:
+        source_pools = build_source_pools(source, make_loader(source_path, provenance["source_dim"], batch_size), device)
     print(f"V5d | device={device} | source weights={class_weights.tolist()}", flush=True)
     history = train_model(
         student, teacher, make_loader(source_path, provenance["source_dim"], batch_size, training=True),
         make_unlabeled_loader(target_path, provenance["target_dim"], batch_size),
-        source_pools, {0: normal, 1: attack}, class_weights, config, settings)
+        source_pools, target_pools, class_weights, config, settings)
     if (snapshots != {"source": data_snapshot(source_path), "target": data_snapshot(target_path)}
             or code != code_hashes()):
         raise ValueError("Training data or code changed during training")
     # Also revalidate frozen checkpoints and configuration before publishing output.
     _, _, current_provenance, *_ = load_context(config_path, training_seed)
-    if current_provenance != provenance:
+    if (current_provenance != provenance
+            or file_hash(resolve_path(config["v5b_calibration"])) != calibration_hash):
         raise ValueError("Frozen inputs changed during training")
     checkpoint = {
         "version": "v5d", "architecture": "hda_v5d",
         "training_seed": config["training_seed"], "teacher_seed": config["teacher_seed"],
         "classifier_only": config["classifier_only"],
         "provenance": provenance, "code_sha256": code, "training_data": snapshots,
+        "preflight_v5b_calibration_sha256": calibration_hash,
         "loss_weights": config["loss_weights"], "training": settings,
         "optimizer": {k: config[k] for k in ("adapter_lr", "classifier_lr", "weight_decay")},
         "source_class_counts": counts, "source_class_weights": class_weights.tolist(),
@@ -219,8 +249,13 @@ def main():
     parser.add_argument("--config", default="configs/hda_v5d.json")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--training-seed", type=int, choices=(42, 43, 44))
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="Verify frozen Stage 1 and calibration, then exit without training")
     args = parser.parse_args()
-    run(args.config, args.device, args.training_seed)
+    if args.preflight_only:
+        preflight(args.config, args.training_seed)
+    else:
+        run(args.config, args.device, args.training_seed)
 
 
 if __name__ == "__main__":

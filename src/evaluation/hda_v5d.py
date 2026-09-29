@@ -33,6 +33,31 @@ def validate_affine(params):
         raise ValueError("Affine calibration requires finite a > 0 and finite b")
 
 
+def validate_v5b_code_hashes(frozen_hashes, current_hashes):
+    """Allow only the reviewed pool-validation refactor when consuming Stage 1.
+
+    Git 0e1cf842 -> 815daced adds build_frozen_target_pools and redirects fit
+    through it. Model loading, scoring, affine math and threshold selection are
+    unchanged. This exception is for reading the pinned artifact, not refitting.
+    """
+    reviewed = {
+        "src/evaluation/hda_v5b_calibration.py": (
+            "276158843ee2b875dd984f75841f75e6b72f1ed169f689f0f3e4be7db8f38651",
+            "af7de97279b5e48fbcbbfc0961cf807e4d66ae6ce9728e2f2fadfafda266b6db",
+        )
+    }
+    accepted = []
+    for name in sorted(set(frozen_hashes) | set(current_hashes)):
+        expected, actual = frozen_hashes.get(name), current_hashes.get(name)
+        if expected == actual:
+            continue
+        if name in reviewed and (expected, actual) == reviewed[name]:
+            accepted.append(name)
+            continue
+        raise ValueError(f"V5b calibration code changed: {name}; frozen={expected}; current={actual}")
+    return accepted
+
+
 def load_v5b_calibration(config, protocol, provenance):
     """Read the pinned Stage 1 artifact; never refit or overwrite it."""
     artifact = json.loads(resolve_path(config["v5b_calibration"]).read_text())
@@ -46,9 +71,12 @@ def load_v5b_calibration(config, protocol, provenance):
         "source_seed", "source_dim", "target_dim", "source_checkpoint_sha256", "teacher_checkpoint_sha256")}
     if frozen["model_dependencies"] != expected_dependencies:
         raise ValueError("V5b calibration model dependencies mismatch")
-    if (frozen["code_sha256"] != calibration_code_hashes()
-            or file_hash(resolve_path(frozen["reference"])) != frozen["reference_sha256"]):
-        raise ValueError("V5b calibration code/reference changed")
+    accepted = validate_v5b_code_hashes(frozen["code_sha256"], calibration_code_hashes())
+    reference_path = resolve_path(frozen["reference"])
+    current_reference_hash = file_hash(reference_path)
+    if current_reference_hash != frozen["reference_sha256"]:
+        raise ValueError(f"V5b calibration reference changed: {reference_path}; "
+                         f"frozen={frozen['reference_sha256']}; current={current_reference_hash}")
     if frozen["threshold_policy"]["max_fpr"] != config["calibration_max_fpr"]:
         raise ValueError("V5b and V5d must use the same source FPR policy")
     if frozen["target_labels_used_for_fit"] is not False:
@@ -58,12 +86,21 @@ def load_v5b_calibration(config, protocol, provenance):
         raise ValueError("Invalid V5b source threshold")
     source_path = resolve_path(config["source_validation"])
     target_path = resolve_path(protocol["target_data"]["adaptation_train"])
-    if (resolve_path(frozen["source_validation"]).resolve() != source_path.resolve()
-            or resolve_path(frozen["target_adaptation_train"]).resolve() != target_path.resolve()
-            or resolve_path(frozen["target_development"]).resolve() != evaluation_target(protocol, "development").resolve()
-            or frozen["source_validation_files"] != data_snapshot(source_path)
-            or frozen["target_adaptation_files"] != data_snapshot(target_path)):
-        raise ValueError("V5b reference data/splits changed")
+    for key, expected_path in (("source_validation", source_path),
+                               ("target_adaptation_train", target_path),
+                               ("target_development", evaluation_target(protocol, "development"))):
+        if resolve_path(frozen[key]).resolve() != expected_path.resolve():
+            raise ValueError(f"V5b reference split changed: {key}")
+    for key, path in (("source_validation_files", source_path), ("target_adaptation_files", target_path)):
+        current = data_snapshot(path)
+        expected = frozen[key]
+        changed = [name for name in sorted(set(expected) | set(current))
+                   if expected.get(name) != current.get(name)]
+        if changed:
+            raise ValueError(f"V5b calibration data changed in {path}: {', '.join(changed)}")
+    if accepted:
+        print("Stage 1 compatibility: reviewed pool-validation refactor accepted: "
+              + ", ".join(accepted), flush=True)
     return artifact
 
 

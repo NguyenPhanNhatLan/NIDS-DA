@@ -10,8 +10,8 @@ from torch.nn import functional as F
 from models.baseline import BaselineMLP
 from models.hda_v1 import HDAV1Model
 from models.hda_v5d import HDAV5DModel
-from training.hda_v5d import baseline_class_weights, checkpoint_path, load_context, train_model
-from evaluation.hda_v5d import operating_metrics, fit
+from training.hda_v5d import baseline_class_weights, checkpoint_path, load_context, train_model, preflight, run
+from evaluation.hda_v5d import operating_metrics, fit, validate_v5b_code_hashes
 from evaluation.hda_v5b_calibration import payload_hash
 
 
@@ -21,6 +21,46 @@ class V5dTests(unittest.TestCase):
         self.source = BaselineMLP(4).eval()
         self.teacher = HDAV1Model(3, self.source).eval().requires_grad_(False)
         self.model = HDAV5DModel(self.source, self.teacher.adapter)
+
+    def test_only_reviewed_calibration_code_transition_is_accepted(self):
+        name = "src/evaluation/hda_v5b_calibration.py"
+        old = "276158843ee2b875dd984f75841f75e6b72f1ed169f689f0f3e4be7db8f38651"
+        new = "af7de97279b5e48fbcbbfc0961cf807e4d66ae6ce9728e2f2fadfafda266b6db"
+        frozen = {name: old, "src/evaluation/calibration.py": "unchanged"}
+        current = {**frozen, name: new}
+        self.assertEqual(validate_v5b_code_hashes(frozen, frozen), [])
+        self.assertEqual(validate_v5b_code_hashes(frozen, current), [name])
+        self.assertEqual(frozen[name], old)  # No rewriting producer provenance.
+        for invalid in ({**current, name: "unknown-revision"},
+                        {**current, "src/evaluation/calibration.py": "changed-math"},
+                        {name: new}, {**current, "unexpected.py": "new"}):
+            with self.assertRaisesRegex(ValueError, "code changed"):
+                validate_v5b_code_hashes(frozen, invalid)
+        with self.assertRaises(ValueError):
+            validate_v5b_code_hashes(current, frozen)  # No blanket bidirectional allowance.
+
+    def test_preflight_verifies_artifact_and_returns_same_context(self):
+        config = {"teacher_seed": 42, "training_seed": 43, "classifier_only": True,
+                  "calibration_max_fpr": .02}
+        context = (config, {}, {}, self.source, self.teacher, self.teacher)
+        with (patch("training.hda_v5d.load_context", return_value=context) as load,
+              patch("evaluation.hda_v5d.load_v5b_calibration", return_value={}) as verify):
+            self.assertIs(preflight("config.json", 43), context)
+        load.assert_called_once_with("config.json", 43)
+        verify.assert_called_once_with(config, {}, {})
+
+    def test_bad_preflight_stops_before_pools_or_training(self):
+        context = ({}, {}, {}, self.source, self.teacher, self.teacher)
+        with (patch("training.hda_v5d.load_context", return_value=context),
+              patch("evaluation.hda_v5d.load_v5b_calibration", side_effect=ValueError("artifact mismatch")),
+              patch("training.hda_v5d.build_frozen_target_pools") as pools,
+              patch("training.hda_v5d.build_source_pools") as source_pools,
+              patch("training.hda_v5d.train_model") as train):
+            with self.assertRaisesRegex(ValueError, "artifact mismatch"):
+                run("config.json")
+            pools.assert_not_called()
+            source_pools.assert_not_called()
+            train.assert_not_called()
 
     def test_classifier_is_a_copy_not_shared_storage(self):
         before = self.source.classifier[0].weight.detach().clone()
@@ -169,6 +209,27 @@ class V5dTests(unittest.TestCase):
             self.assertEqual(frozen["thresholds"]["v5b"], .7)
             self.assertGreater(frozen["parameters"]["v5d"]["a"], 0)
             self.assertFalse(frozen["target_labels_used_for_fit"])
+
+    def test_source_ce_only_skips_alignment_teacher_and_adapter(self):
+        model = HDAV5DModel(self.source, self.teacher.adapter, classifier_only=True)
+        before = {k: v.clone() for k, v in model.adapter.state_dict().items()}
+        classifier_before = model.classifier[0].weight.detach().clone()
+        config = {"adapter_lr": 1e-4, "classifier_lr": 1e-5, "weight_decay": 1e-4,
+                  "loss_weights": {"hidden": 0., "normal": 0., "attack": 0., "rank": 0., "source": 1.}}
+        with (patch("training.hda_v5d.mmd_loss", side_effect=AssertionError("MMD must be skipped")),
+              patch("training.hda_v5d.ranking_loss", side_effect=AssertionError("Ranking must be skipped")),
+              patch.object(self.teacher, "forward", side_effect=AssertionError("Teacher must be skipped")),
+              patch.object(model.adapter, "forward", side_effect=AssertionError("Adapter must be skipped"))):
+            history = train_model(model, self.teacher,
+                                  [(torch.randn(8, 4), torch.tensor([0, 1] * 4))],
+                                  [torch.randn(8, 3)], None, None, baseline_class_weights([4, 4]),
+                                  config, {"epochs": 1, "class_batch_size": 4})
+        self.assertEqual(history[0]["loss"], history[0]["source"])
+        for key in ("hidden", "normal", "attack", "rank"):
+            self.assertEqual(history[0][key], 0.)
+        for key, value in model.adapter.state_dict().items():
+            self.assertTrue(torch.equal(value, before[key]), key)
+        self.assertFalse(torch.equal(classifier_before, model.classifier[0].weight))
 
     def test_training_step_preserves_teacher_source_and_frozen_buffers(self):
         teacher_before = {k: v.clone() for k, v in self.teacher.state_dict().items()}
