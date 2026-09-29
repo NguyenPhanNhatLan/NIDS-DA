@@ -1,0 +1,15 @@
+{
+  "experiment_id": "v5c_filtered_pseudo_seed42",
+  "stage1_reference": "configs/hda_stage1_frozen.json",
+  "teacher_calibration": null,
+  "seed": 42,
+  "lambda_pl": 0.10,
+  "min_samples_per_class": 64,
+  "min_attack_confirmation_rate": 0.50,
+  "source_validation": "data/features/unsw_val",
+  "calibration_max_fpr": 0.01,
+  "audit_dir": "results/hda_v5c/audit",
+  "checkpoint_dir": "models/hda_v5c",
+  "calibration_dir": "results/hda_v5c/calibration",
+  "result_dir": "results/hda_v5c/development"
+}
