@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import torch
 
 from evaluation.baseline import compute_metrics
@@ -96,6 +97,31 @@ def save_frozen(path, payload):
         stream.write("\n")
 
 
+def build_frozen_target_pools(teacher, protocol, target_dim, batch_size):
+    policy = protocol["pseudo_labels"]
+    if (policy["normal_quantile"] != 0.02
+            or policy["attack_quantile_low"] != 0.95
+            or policy["attack_quantile_high_exclusive"] != 0.98
+            or policy["dynamic_updates"]):
+        raise ValueError("Pseudo policy must remain frozen at q02 / q95 / q98")
+    train_path = resolve_path(protocol["target_data"]["adaptation_train"])
+    development_path = evaluation_target(protocol, "development")
+    if train_path.resolve() == development_path.resolve():
+        raise ValueError("Pseudo pools must use adaptation train, not development")
+    expected_rows = sum(pq.read_metadata(path).num_rows for path in sorted(train_path.glob("*.parquet")))
+    loader = make_teacher_loader(train_path, target_dim, batch_size)
+    normal, attack, metadata = build_pseudo_pools(teacher, loader, torch.device("cpu"))
+    if metadata["train_rows"] != expected_rows:
+        raise ValueError("Teacher did not score every adaptation-train row")
+    metadata.update(
+        teacher="frozen_v2", data_path=str(train_path), labels_used=False,
+        normal_quantile=0.02, attack_quantile_low=0.95,
+        attack_quantile_high_exclusive=0.98,
+    )
+    print(f"Frozen pseudo policy | rows={expected_rows} | Normal: margin <= q02 | Attack: q95 <= margin < q98")
+    return normal, attack, metadata
+
+
 def fit(reference_path, calibration_path):
     if calibration_path.exists():
         raise FileExistsError(f"Calibration already frozen: {calibration_path}")
@@ -110,8 +136,8 @@ def fit(reference_path, calibration_path):
     )
     policy = reference["threshold_policy"]
     threshold = select_threshold_by_fpr(source_labels.numpy(), source_margins.numpy(), policy["max_fpr"])
-    normal, attack, pseudo = build_pseudo_pools(
-        teacher, make_teacher_loader(target_path, provenance["target_dim"], batch_size), torch.device("cpu"),
+    normal, attack, pseudo = build_frozen_target_pools(
+        teacher, protocol, provenance["target_dim"], batch_size,
     )
     normal_margins, _ = collect_margins(student, normal.split(batch_size))
     attack_margins, _ = collect_margins(student, attack.split(batch_size))

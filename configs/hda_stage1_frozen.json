@@ -1,0 +1,23 @@
+{
+  "stage_id": "stage_1_v5b_asymmetric_frozen",
+  "status": "frozen",
+  "architecture": "hda_v1",
+  "seed": 42,
+  "loss_weights": {
+    "hidden": 1.0,
+    "normal": 0.05,
+    "attack": 0.02,
+    "rank": 0.1
+  },
+  "checkpoint": "models/hda_v5b/asymmetric/v5b_seed42.pt",
+  "checkpoint_sha256": "07fa020bf75c735fb5b87d990d7c792e4cbc512247b5d34825430b5a99ef4f6b",
+  "config": "configs/hda_v5b_rank_0p10_asymmetric.json",
+  "config_sha256": "ba601bde5d78df9b6f27f27e8e99042584279ad3421eee021635318a914f01bf",
+  "development_reference": {
+    "roc_auc": 0.8098,
+    "pr_auc": 0.5851,
+    "result": "results/hda_v5b/asymmetric/development/v5b_seed42.json",
+    "result_sha256": "855b6a043bae96e97731fab469cb24c588a9d520b9ae9f8299f45627c04d11fa"
+  },
+  "policy": "Keep Stage 1 architecture, loss and trained weights unchanged. Subsequent calibration operates on this frozen checkpoint."
+}

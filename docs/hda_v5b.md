@@ -1,5 +1,13 @@
 # V5b: V5a adapter with ranking preservation
 
+V5b asymmetric seed 42 is the frozen Stage 1, recorded in
+`configs/hda_stage1_frozen.json`. Keep its HDAV1Model architecture, trained weights,
+and loss `hidden + 0.05 Normal + 0.02 Attack + 0.10 rank` unchanged.
+Its development reference is ROC-AUC=0.8098 (approximately 0.810), AP=0.5851
+(approximately 0.585). Subsequent calibration uses this exact checkpoint;
+it does not modify Stage 1. The training commands below document how the
+experiment was produced, not an instruction to retrain the frozen Stage 1.
+
 V5b uses `HDAV1Model`. The student adapter starts from the same-seed V2 teacher
 adapter; only `student.adapter.parameters()` are optimized with Adam, lr 0.001,
 weight decay 0.0001. The entire UNSW seed-42 source and the teacher stay frozen.

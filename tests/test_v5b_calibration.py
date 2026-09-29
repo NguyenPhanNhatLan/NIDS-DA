@@ -15,7 +15,7 @@ from torch import nn
 from evaluation.calibration import (
     calibrate_margin, calibrated_probability, fit_affine_calibrator, select_threshold_by_fpr,
 )
-from evaluation.hda_v5b_calibration import fit, report
+from evaluation.hda_v5b_calibration import build_frozen_target_pools, fit, report
 
 
 class MarginModel(nn.Module):
@@ -74,6 +74,8 @@ class CalibrationTests(unittest.TestCase):
             reference_path = root / "reference.json"
             reference_path.write_text(json.dumps(reference))
             protocol = {"training": {"batch_size": 32},
+                        "pseudo_labels": {"normal_quantile": 0.02, "attack_quantile_low": 0.95,
+                                          "attack_quantile_high_exclusive": 0.98, "dynamic_updates": False},
                         "target_data": {"adaptation_train": str(target_path), "development": str(dev_path)}}
             provenance = {"source_dim": 1, "target_dim": 1}
             models = (reference, protocol, provenance, MarginModel(), MarginModel(), MarginModel())
@@ -85,6 +87,8 @@ class CalibrationTests(unittest.TestCase):
                 frozen_bytes = calibration_path.read_bytes()
                 frozen = json.loads(frozen_bytes)["frozen"]
                 self.assertFalse(frozen["target_labels_used_for_fit"])
+                self.assertEqual(frozen["pseudo_label_metadata"]["train_rows"], 256)
+                self.assertFalse(frozen["pseudo_label_metadata"]["labels_used"])
                 self.assertLessEqual(frozen["source_validation_metrics"]["fpr"], 0.01)
                 with self.assertRaises(FileExistsError):
                     fit(reference_path, calibration_path)
@@ -101,6 +105,12 @@ class CalibrationTests(unittest.TestCase):
                 calibration_path.write_text(json.dumps(modified))
                 with self.assertRaisesRegex(ValueError, "modified"):
                     report(calibration_path, root / "other_report.json")
+
+    def test_rejects_changed_pseudo_policy(self):
+        protocol = {"pseudo_labels": {"normal_quantile": 0.05, "attack_quantile_low": 0.95,
+                                      "attack_quantile_high_exclusive": 0.98, "dynamic_updates": False}}
+        with self.assertRaisesRegex(ValueError, "frozen"):
+            build_frozen_target_pools(MarginModel(), protocol, 1, 32)
 
 
 if __name__ == "__main__":
