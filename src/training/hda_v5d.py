@@ -28,9 +28,15 @@ def code_hashes():
     return hashes
 
 
-def load_context(config_path):
+def load_context(config_path, training_seed=None):
     path = resolve_path(config_path)
     config = json.loads(path.read_text())
+    if training_seed is not None:
+        config["training_seed"] = training_seed
+    if type(config["training_seed"]) is not int or config["training_seed"] not in (42, 43, 44):
+        raise ValueError("training_seed must be 42, 43 or 44")
+    if type(config["classifier_only"]) is not bool:
+        raise ValueError("classifier_only must be a boolean")
     for name in ("adapter_lr", "classifier_lr"):
         if not math.isfinite(config[name]) or config[name] <= 0:
             raise ValueError(f"{name} must be positive and finite")
@@ -44,7 +50,7 @@ def load_context(config_path):
         raise ValueError("calibration_max_fpr must be in [0, 1]")
     reference_path = resolve_path(config["stage1_reference"])
     reference, protocol, provenance, source, v2, teacher = load_frozen_models(reference_path)
-    if config["seed"] != 42 or reference["seed"] != 42:
+    if config["teacher_seed"] != 42 or reference["seed"] != config["teacher_seed"]:
         raise ValueError("V5d requires frozen V5b asymmetric seed 42")
     if reference["loss_weights"] != {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10}:
         raise ValueError("Expected asymmetric V5b teacher")
@@ -55,6 +61,8 @@ def load_context(config_path):
     if resolve_path(config["source_metadata"]).resolve() != (ROOT / "data/features/unsw_metadata.json").resolve():
         raise ValueError("Use the same UNSW class-count metadata as baseline")
     provenance = {**provenance, "config_sha256": file_hash(path),
+                  "training_seed": config["training_seed"], "teacher_seed": config["teacher_seed"],
+                  "classifier_only": config["classifier_only"],
                   "stage1_reference_sha256": file_hash(reference_path),
                   "stage1_checkpoint_sha256": reference["checkpoint_sha256"],
                   "source_metadata_sha256": file_hash(resolve_path(config["source_metadata"]))}
@@ -69,16 +77,18 @@ def baseline_class_weights(counts):
 
 
 def checkpoint_path(config):
-    return resolve_path(config["checkpoint_dir"]) / f"v5d_seed{config['seed']}.pt"
+    return resolve_path(config["checkpoint_dir"]) / f"v5d_seed{config['training_seed']}.pt"
 
 
 def load_student(config, provenance, source, teacher):
     checkpoint = torch.load(checkpoint_path(config), map_location="cpu", weights_only=True)
     if (checkpoint.get("version") != "v5d" or checkpoint.get("architecture") != "hda_v5d"
             or checkpoint["provenance"] != provenance or checkpoint["code_sha256"] != code_hashes()
-            or checkpoint["seed"] != config["seed"]):
+            or checkpoint["training_seed"] != config["training_seed"]
+            or checkpoint["teacher_seed"] != config["teacher_seed"]
+            or checkpoint["classifier_only"] != config["classifier_only"]):
         raise ValueError("V5d checkpoint provenance mismatch")
-    model = HDAV5DModel(source, teacher.adapter)
+    model = HDAV5DModel(source, teacher.adapter, classifier_only=config["classifier_only"])
     model.adapter.load_state_dict(checkpoint["target_adapter_state_dict"])
     model.classifier.load_state_dict(checkpoint["classifier_state_dict"])
     model.eval().requires_grad_(False)
@@ -147,12 +157,12 @@ def train_model(student, teacher, source_loader, target_loader, source_pools,
     return history
 
 
-def run(config_path, device_name="auto"):
-    config, protocol, provenance, source, v2, teacher = load_context(config_path)
+def run(config_path, device_name="auto", training_seed=None):
+    config, protocol, provenance, source, v2, teacher = load_context(config_path, training_seed)
     output = checkpoint_path(config)
     if output.exists():
         raise FileExistsError(f"Checkpoint already exists: {output}")
-    set_seed(config["seed"])
+    set_seed(config["training_seed"])
     code = code_hashes()
     settings = protocol["training"]
     batch_size = settings["batch_size"]
@@ -168,7 +178,7 @@ def run(config_path, device_name="auto"):
     device = torch.device(("cuda" if torch.cuda.is_available() else
                            "mps" if torch.backends.mps.is_available() else "cpu")
                           if device_name == "auto" else device_name)
-    student = HDAV5DModel(source, teacher.adapter).to(device)
+    student = HDAV5DModel(source, teacher.adapter, classifier_only=config["classifier_only"]).to(device)
     source.to(device)
     teacher.to(device)
     source_pools = build_source_pools(source, make_loader(source_path, provenance["source_dim"], batch_size), device)
@@ -181,11 +191,13 @@ def run(config_path, device_name="auto"):
             or code != code_hashes()):
         raise ValueError("Training data or code changed during training")
     # Also revalidate frozen checkpoints and configuration before publishing output.
-    _, _, current_provenance, *_ = load_context(config_path)
+    _, _, current_provenance, *_ = load_context(config_path, training_seed)
     if current_provenance != provenance:
         raise ValueError("Frozen inputs changed during training")
     checkpoint = {
-        "version": "v5d", "architecture": "hda_v5d", "seed": config["seed"],
+        "version": "v5d", "architecture": "hda_v5d",
+        "training_seed": config["training_seed"], "teacher_seed": config["teacher_seed"],
+        "classifier_only": config["classifier_only"],
         "provenance": provenance, "code_sha256": code, "training_data": snapshots,
         "loss_weights": config["loss_weights"], "training": settings,
         "optimizer": {k: config[k] for k in ("adapter_lr", "classifier_lr", "weight_decay")},
@@ -206,8 +218,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/hda_v5d.json")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
+    parser.add_argument("--training-seed", type=int, choices=(42, 43, 44))
     args = parser.parse_args()
-    run(args.config, args.device)
+    run(args.config, args.device, args.training_seed)
 
 
 if __name__ == "__main__":

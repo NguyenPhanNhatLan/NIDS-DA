@@ -7,20 +7,25 @@ from torch import nn
 
 
 class HDAV5DModel(nn.Module):
-    def __init__(self, source_model, target_adapter):
+    def __init__(self, source_model, target_adapter, classifier_only=False):
         super().__init__()
+        self.classifier_only = classifier_only
         # Private copies prevent parameters AND training-mode changes leaking to teachers.
         self.source_encoder = copy.deepcopy(source_model)
         self.source_encoder.requires_grad_(False)
         self.source_encoder.eval()
         self.adapter = copy.deepcopy(target_adapter)
-        self.adapter.requires_grad_(True)
+        self.adapter.requires_grad_(not classifier_only)
+        if classifier_only:
+            self.adapter.eval()
         self.classifier = copy.deepcopy(source_model.classifier)
         self.classifier.requires_grad_(True)
 
     def train(self, mode=True):
         super().train(mode)
         self.source_encoder.eval()  # Includes source dropout and both frozen BNs.
+        if self.classifier_only:
+            self.adapter.eval()  # Freeze running_mean/var and num_batches_tracked too.
         return self
 
     def source_representations(self, x):
@@ -58,5 +63,7 @@ class HDAV5DModel(nn.Module):
                 bn.train(mode)
 
     def optimizer_groups(self, adapter_lr, classifier_lr):
+        if self.classifier_only:
+            return [{"params": self.classifier.parameters(), "lr": classifier_lr}]
         return [{"params": self.adapter.parameters(), "lr": adapter_lr},
                 {"params": self.classifier.parameters(), "lr": classifier_lr}]

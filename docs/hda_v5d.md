@@ -1,56 +1,73 @@
-# V5d: source-supervised private classifier
+# V5d và V5d-A
 
-V5d dùng file riêng, không sửa architecture V1, V5b hoặc checkpoint frozen.
-Target adapter deepcopy từ V5b asymmetric seed 42. Classifier deepcopy từ UNSW
-baseline và bật gradient riêng. Source encoder được copy và frozen; source path
-và target path dùng chung FC2/BN2 frozen trong V5d. Hai path dùng cùng classifier
-mới. `train()` luôn giữ source encoder, shared BN và source dropout ở eval.
+V5d dùng classifier deepcopy riêng, khởi tạo adapter từ V5b asymmetric frozen.
+Không sửa V1/V5b hoặc checkpoint source/teacher. Teacher seed luôn 42;
+training_seed có thể là 42, 43, 44, chỉ đổi randomness của training.
 
-Loss khởi đầu:
+Loss mặc định:
 
 `hidden MMD + 0.05 Normal MMD + 0.02 Attack MMD + 0.10 rank + 0.10 source CE`.
 
-Source CE dùng `N / (2 * N_class)` từ cùng UNSW metadata như baseline, không đổi
-sang balanced source sampling. Conditional MMD dùng V2 q02/[q95,q98) pools cố
-định từ CICIDS adaptation-train; không dùng filtered V5c pools hay target labels.
-Ranking teacher là V5b frozen, eval/no_grad trên cùng natural target batch.
-Natural batch cập nhật adapter BN một lần; balanced pseudo batch tạm BN eval.
-Shared layers frozen nhưng giữ autograd qua target path để adapter nhận gradient.
+Source CE giữ class weights `N / (2 * N_class)` như baseline. Conditional MMD
+và calibration dùng V2 q02/[q95,q98) pools cố định từ adaptation-train không nhãn.
+Ranking teacher là V5b frozen. Source encoder và shared FC2/BN2 luôn frozen/eval.
+Adam dùng adapter lr 1e-4, classifier lr 1e-5, weight decay 1e-4; 10 epochs,
+batch 256, class batch 64, lưu epoch cuối. Không chọn model bằng target labels.
 
-Adam chỉ nhận adapter (lr 1e-4) và classifier copy (lr 1e-5), weight decay 1e-4.
-Kế thừa epochs/batch sizes của protocol V5b: 10 epochs, natural batch 256,
-class batch 64. Lưu epoch cuối, không chọn checkpoint bằng development labels.
-Ranking chỉ giữ tương quan margin, không trực tiếp tối ưu AP. Các hệ số và learning
-rate trên là điểm bắt đầu, chưa được tối ưu.
+## Hai chế độ
 
-Chạy từ thư mục gốc repo:
+- `configs/hda_v5d.json`: adapter và classifier trainable; natural target batch
+  cập nhật adapter BN, pseudo-balanced batch dùng BN eval.
+- `configs/hda_v5d_a.json`: `classifier_only=true`. Adapter weights, running_mean,
+  running_var và num_batches_tracked đều frozen kể cả khi gọi `train()`.
+  Optimizer chỉ nhận classifier. MMD vẫn được tính/log để giữ các bước lấy mẫu
+  tương ứng, nhưng không có gradient tới representation. Classifier nhận source
+  CE và ranking loss. Đây không phải thí nghiệm source-CE-only.
+
+## Calibration trước development
+
+Cả hai model dùng source FPR policy **2%**:
+
+- V5b dùng lại nguyên artifact
+  `results/hda_v5b/asymmetric/calibration/fpr_0p02_seed42.json`.
+  Payload hash được pin trong config; code xác minh checkpoint, dependencies,
+  source/target snapshots và FPR policy. Không fit lại V5b.
+- V5d chọn threshold trên UNSW validation qua classifier mới. Fit affine riêng
+  bằng median source margins theo nhãn UNSW và median target margins trên hai
+  V2 pseudo pools không nhãn. Freeze `a > 0`, `b` và source threshold trước report.
+- Report chấm `a * target_margin + b` ở source threshold riêng từng model.
+  `operating_points` lưu cả raw (margin chưa calibrate tại source threshold) và
+  calibrated metrics, kèm threshold tương đương trong raw margin space.
+  `metrics` và `delta_v5d_minus_v5b` là kết quả calibrated; có raw delta riêng.
+
+Pseudo anchors có thể nhiễu. Affine dương không tăng AP/ROC-AUC; nó phục vụ F1,
+Recall và FPR. FPR source 2% không đảm bảo FPR target 2%. Development chưa phải
+untouched final holdout. Không lấy target development labels để train hoặc fit.
+
+## Lệnh chạy
+
+Code/test chưa được chạy khi chỉnh sửa. Từ thư mục gốc repo:
 
 ```bash
-# Test tùy chọn trước khi train (chưa được chạy khi viết code)
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p test_hda_v5d.py
 
-PYTHONPATH=src .venv/bin/python -u -m training.hda_v5d --config configs/hda_v5d.json
-PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_v5d --config configs/hda_v5d.json --stage fit
-PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_v5d --config configs/hda_v5d.json --stage report
+PYTHONPATH=src .venv/bin/python -u -m training.hda_v5d --config configs/hda_v5d.json --training-seed 42
+PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_v5d --config configs/hda_v5d.json --training-seed 42 --stage fit
+PYTHONPATH=src .venv/bin/python -u -m evaluation.hda_v5d --config configs/hda_v5d.json --training-seed 42 --stage report
 ```
 
-Train tự chọn CUDA/MPS/CPU, có thể thêm `--device cpu`. Không cần chạy V5c audit.
+Để chạy V5d-A, thay config của cả ba lệnh bằng `configs/hda_v5d_a.json`.
+Để lặp seed, thay `--training-seed 42` bằng 43 hoặc 44 trong cả ba lệnh.
+Nếu không truyền CLI, dùng training_seed trong config. Teacher vẫn luôn seed 42.
+Có thể thêm `--device cpu` cho lệnh train. Không cần V5c audit.
 
-Evaluation dùng protocol source-only threshold calibration: `fit` chọn ngưỡng
-margin riêng cho V5b và V5d trên UNSW validation với cùng FPR tối đa 0.01.
-V5b source path dùng nguyên baseline; V5d source path dùng classifier đã học.
-Không fit affine từ target pools và không đọc development trong bước fit.
-`report` mới đọc nhãn development và so sánh AP (`pr_auc` = average precision),
-ROC-AUC, F1, Recall, FPR và delta V5d trừ V5b. FPR source không đảm bảo FPR target.
-Đây là protocol khác affine calibration V5c; không so trực tiếp F1 giữa hai
-report khác protocol. Development không phải untouched final holdout.
+Artifacts được tách theo chế độ và training seed:
 
-Artifacts không ghi đè:
+- V5d: `models/hda_v5d/affine_fpr_0p02/v5d_seed42.pt`;
+  `results/hda_v5d/affine_fpr_0p02/{calibration,development}/...`.
+- V5d-A: cùng cấu trúc dưới `models/hda_v5d_a` và `results/hda_v5d_a`.
 
-- `models/hda_v5d/v5d_seed42.pt`: adapter và classifier mới, history, hashes.
-- `results/hda_v5d/calibration/seed42.json`: ngưỡng và metrics source validation.
-- `results/hda_v5d/development/v5d_vs_v5b_seed42.json`: so sánh development.
-
-Giữ nguyên config/code giữa các bước. Muốn thử nghiệm khác, tạo config với bộ
-checkpoint_dir/calibration_dir/result_dir mới. Không sửa hashes để tái sử dụng
-artifact không còn khớp code hoặc dữ liệu.
+File calibration là `seed42.json`; report là `v5d_vs_v5b_seed42.json`, tương tự
+cho seed 43/44. Không ghi đè artifact cũ. Các checkpoint/calibration V5d từ code
+cũ không tương thích với revision này: dùng pipeline mới từ bước train. Không
+sửa hash của artifact cũ. Giữ nguyên code/config giữa train, fit và report.
