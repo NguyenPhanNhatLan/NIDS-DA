@@ -8,7 +8,7 @@
   "min_attack_confirmation_rate": 0.50,
   "source_validation": "data/features/unsw_val",
   "calibration_max_fpr": 0.01,
-  "audit_dir": "results/hda_v5c/audit",
+  "audit_dir": "results/hda_v5c/audit_filtered_v1",
   "checkpoint_dir": "models/hda_v5c",
   "calibration_dir": "results/hda_v5c/calibration",
   "result_dir": "results/hda_v5c/development"

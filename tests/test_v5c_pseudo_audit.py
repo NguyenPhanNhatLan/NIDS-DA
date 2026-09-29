@@ -29,11 +29,19 @@ class AuditTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 analyze_margins(a, b, self.thresholds)
 
-    def test_quantile_alone_does_not_confirm_class(self):
+    def test_normal_acceptance_uses_v5b_not_v2_threshold(self):
         margins = np.arange(1000.) + 1
         report, masks = analyze_margins(margins, -margins, self.thresholds, 2)
-        self.assertEqual(int(masks["normal"].sum()), 0)
+        self.assertEqual(int(masks["normal"].sum()), 20)
+        self.assertEqual(int(masks["attack"].sum()), 0)
         self.assertFalse(report["training_allowed"])
+
+    def test_attack_acceptance_uses_v5b_not_v2_threshold(self):
+        margins = np.arange(1000.) - 1000
+        report, masks = analyze_margins(margins, -margins, self.thresholds, 2)
+        self.assertEqual(int(masks["attack"].sum()), 30)
+        self.assertEqual(int(masks["normal"].sum()), 0)
+        self.assertEqual(report["pools"]["attack"]["v5b_confirmation_rate"], 1.)
 
 
 if __name__ == "__main__":

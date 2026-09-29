@@ -8,22 +8,24 @@ from evaluation.hda_v5b_calibration import (
 )
 from models.hda_v1 import HDAV1Model
 from training.hda_v5b import ROOT, file_hash
-from training.thesis_protocol import resolve_path
+from training.thesis_protocol import evaluation_target, resolve_path
 
 
 def pipeline_hashes():
     hashes = calibration_code_hashes()
     for name in ("src/training/v5c_common.py", "src/evaluation/v5c_pseudo_audit.py",
-                 "src/training/hda_v5c.py", "src/evaluation/hda_v5c.py"):
-        hashes[name] = file_hash(ROOT / name) if (ROOT / name).exists() else None
+                 "src/training/hda_v5c.py", "src/evaluation/hda_v5c.py",
+                 "src/training/adaptation.py", "src/training/baseline.py",
+                 "src/training/thesis_protocol.py", "src/evaluation/protocol_revision.py"):
+        hashes[name] = file_hash(ROOT / name)
     return hashes
 
 
 def load_context(config_path):
     config_path = resolve_path(config_path)
     config = json.loads(config_path.read_text())
-    if not math.isfinite(config["lambda_pl"]) or config["lambda_pl"] <= 0:
-        raise ValueError("lambda_pl must be positive and finite")
+    if not math.isfinite(config["lambda_pl"]) or config["lambda_pl"] < 0:
+        raise ValueError("lambda_pl must be nonnegative and finite")
     if config["min_samples_per_class"] < 2:
         raise ValueError("At least two accepted samples per class are required")
     if not 0.5 <= config["min_attack_confirmation_rate"] <= 1:
@@ -32,8 +34,15 @@ def load_context(config_path):
         raise ValueError("calibration_max_fpr must be in [0, 1]")
     reference_path = resolve_path(config["stage1_reference"])
     reference, protocol, provenance, source, v2, v5b = load_frozen_models(reference_path)
-    if reference["seed"] != 42 or provenance["source_seed"] != 42:
+    if config["seed"] != 42 or reference["seed"] != 42 or provenance["source_seed"] != 42:
         raise ValueError("V5c requires the frozen V5b asymmetric seed-42 teacher")
+    target_train = resolve_path(protocol["target_data"]["adaptation_train"]).resolve()
+    development = evaluation_target(protocol, "development").resolve()
+    source_validation = resolve_path(config["source_validation"]).resolve()
+    if target_train == development or source_validation in (target_train, development):
+        raise ValueError("Source validation, adaptation train and development must be separate")
+    if source_validation != (ROOT / "data/features/unsw_val").resolve():
+        raise ValueError("V5c calibration requires the fixed UNSW validation split")
     if reference["loss_weights"] != {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10}:
         raise ValueError("Stage 1 must be V5b asymmetric")
     checkpoint = torch.load(resolve_path(reference["checkpoint"]), map_location="cpu", weights_only=True)
