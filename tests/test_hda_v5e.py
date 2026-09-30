@@ -43,13 +43,13 @@ class V5eTests(unittest.TestCase):
                   "loss_weights": {"hidden": 1., "normal": .05, "attack": .02, "rank": .1, "source": .1}}
         teacher_before = {k: v.clone() for k, v in self.teacher.state_dict().items()}
         frozen_before = {k: v.clone() for k, v in self.student.source_encoder.state_dict().items()}
-        with patch("training.hda_v5e.mk_mmd_loss", wraps=mk_mmd_loss) as kernel:
+        with patch("training.mkmmd.mk_mmd_loss", wraps=mk_mmd_loss) as kernel:
             rows = train_model(self.student, self.teacher,
                                [(self.s, torch.tensor([0, 1] * 4))], [self.t],
                                self.pools, {0: self.t[:4], 1: self.t[4:]}, torch.ones(2),
                                config, {"epochs": 1, "class_batch_size": 4})
         self.assertEqual(kernel.call_count, 3)
-        self.assertTrue(all(c.kwargs["scales"] == config["kernel_scales"] for c in kernel.call_args_list))
+        self.assertTrue(all(c.kwargs["_scale_tensor"].tolist() == config["kernel_scales"] for c in kernel.call_args_list))
         self.assertGreater(rows[0]["source"], 0.)
         self.assertAlmostEqual(rows[0]["loss"], sum(config["loss_weights"][k] * rows[0][k]
                                                   for k in config["loss_weights"]), places=5)

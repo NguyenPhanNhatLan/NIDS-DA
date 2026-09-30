@@ -1,4 +1,4 @@
-"""V5e: V5b alignment + ranking + weighted source CE on a private classifier."""
+"""V5f: V5b alignment + ranking + weighted source CE on a private classifier."""
 import argparse
 import json
 import math
@@ -21,10 +21,13 @@ from training.thesis_protocol import evaluation_target, resolve_path
 from training.v6_data import make_loader, make_unlabeled_loader, make_teacher_loader
 
 
+V5D_WEIGHTS = {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10, "source": 0.10}
+V5F_WEIGHTS = {**V5D_WEIGHTS, "attack": 0.05}
+
 def code_hashes():
     hashes = calibration_code_hashes()
-    for name in ("src/models/hda_v5d.py", "src/training/hda_v5e.py",
-                 "src/evaluation/hda_v5e.py", "src/training/mkmmd.py", "src/training/v5e_performance.py", "src/training/adaptation.py",
+    for name in ("src/models/hda_v5d.py", "src/training/hda_v5f.py",
+                 "src/evaluation/hda_v5f.py", "src/training/mkmmd.py", "src/training/v5e_performance.py", "src/training/adaptation.py",
                  "src/training/baseline.py", "src/training/thesis_protocol.py",
                  "src/evaluation/protocol_revision.py"):
         hashes[name] = file_hash(ROOT / name)
@@ -36,11 +39,10 @@ def load_context(config_path, training_seed=None):
     config = json.loads(path.read_text())
     if (not config["kernel_scales"] or any(not math.isfinite(v) or v <= 0 for v in config["kernel_scales"])):
         raise ValueError("kernel_scales must contain positive finite multipliers of bandwidth squared")
-    if (config["classifier_only"] or config["loss_weights"] !=
-            {"hidden": 1., "normal": .05, "attack": .02, "rank": .10, "source": .10}
+    if (config["classifier_only"] or config["loss_weights"] != V5F_WEIGHTS
             or config["adapter_lr"] != 1e-4 or config["classifier_lr"] != 1e-5
             or config["weight_decay"] != 1e-4):
-        raise ValueError("V5e-1 must preserve V5d joint loss weights and optimizer settings")
+        raise ValueError("V5f must use V5F_WEIGHTS and preserve V5d optimizer settings")
     if training_seed is not None:
         config["training_seed"] = training_seed
     if type(config["training_seed"]) is not int or config["training_seed"] not in (42, 43, 44):
@@ -53,7 +55,7 @@ def load_context(config_path, training_seed=None):
     if not math.isfinite(config["weight_decay"]) or config["weight_decay"] < 0:
         raise ValueError("weight_decay must be nonnegative and finite")
     if set(config["loss_weights"]) != {"hidden", "normal", "attack", "rank", "source"}:
-        raise ValueError("Expected all five V5e loss weights")
+        raise ValueError("Expected all five V5f loss weights")
     if any(not math.isfinite(v) or v < 0 for v in config["loss_weights"].values()):
         raise ValueError("Loss weights must be nonnegative and finite")
     if not 0 <= config["calibration_max_fpr"] <= 1:
@@ -61,7 +63,7 @@ def load_context(config_path, training_seed=None):
     reference_path = resolve_path(config["stage1_reference"])
     reference, protocol, provenance, source, v2, teacher = load_frozen_models(reference_path)
     if config["teacher_seed"] != 42 or reference["seed"] != config["teacher_seed"]:
-        raise ValueError("V5e requires frozen V5b asymmetric seed 42")
+        raise ValueError("V5f requires frozen V5b asymmetric seed 42")
     if reference["loss_weights"] != {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10}:
         raise ValueError("Expected asymmetric V5b teacher")
     if resolve_path(protocol["target_data"]["adaptation_train"]).resolve() == evaluation_target(protocol, "development").resolve():
@@ -87,17 +89,17 @@ def baseline_class_weights(counts):
 
 
 def checkpoint_path(config):
-    return resolve_path(config["checkpoint_dir"]) / f"v5e_seed{config['training_seed']}.pt"
+    return resolve_path(config["checkpoint_dir"]) / f"v5f_seed{config['training_seed']}.pt"
 
 
 def load_student(config, provenance, source, teacher):
     checkpoint = torch.load(checkpoint_path(config), map_location="cpu", weights_only=True)
-    if (checkpoint.get("version") != "v5e" or checkpoint.get("architecture") != "hda_v5e"
+    if (checkpoint.get("version") != "v5f" or checkpoint.get("architecture") != "hda_v5f"
             or checkpoint["provenance"] != provenance or checkpoint["code_sha256"] != code_hashes()
             or checkpoint["training_seed"] != config["training_seed"]
             or checkpoint["teacher_seed"] != config["teacher_seed"]
             or checkpoint["classifier_only"] != config["classifier_only"]):
-        raise ValueError("V5e checkpoint provenance mismatch")
+        raise ValueError("V5f checkpoint provenance mismatch")
     model = HDAV5DModel(source, teacher.adapter, classifier_only=config["classifier_only"])
     model.adapter.load_state_dict(checkpoint["target_adapter_state_dict"])
     model.classifier.load_state_dict(checkpoint["classifier_state_dict"])
@@ -176,7 +178,7 @@ def train_model(student, teacher, source_loader, target_loader, source_pools,
                                              target_logits[:, 1] - target_logits[:, 0])
             loss = sum(weights[k] * value for k, value in terms.items())
             if not torch.isfinite(loss):
-                raise ValueError("V5e loss contains NaN/Inf")
+                raise ValueError("V5f loss contains NaN/Inf")
             optimizer.zero_grad()
             with profiler.measure("backward"):
                 loss.backward()
@@ -226,15 +228,15 @@ def load_v5d_reference(config, protocol, provenance):
     if file_hash(resolve_path(config["v5d_reference_checkpoint"])) != report["dependencies"]["v5d_checkpoint_sha256"]:
         raise ValueError("Pinned V5d checkpoint changed")
     checkpoint = torch.load(resolve_path(config["v5d_reference_checkpoint"]), map_location="cpu", weights_only=True)
-    if (checkpoint["loss_weights"] != config["loss_weights"]
+    if (checkpoint["loss_weights"] != V5D_WEIGHTS
             or checkpoint["optimizer"] != {key: config[key] for key in ("adapter_lr", "classifier_lr", "weight_decay")}
             or checkpoint["training"] != protocol["training"]
             or checkpoint["classifier_only"] or checkpoint["checkpoint_selection"] != "last epoch"):
-        raise ValueError("V5e-1 must match V5d supervision, optimizer, training schedule and checkpoint selection")
+        raise ValueError("V5d reference must use V5D_WEIGHTS and match optimizer, training schedule and checkpoint selection")
     if checkpoint["training_data"] != {
             "source": data_snapshot(ROOT / "data/features/unsw_train"),
             "target": data_snapshot(resolve_path(protocol["target_data"]["adaptation_train"]))}:
-        raise ValueError("V5d/V5e training datasets differ")
+        raise ValueError("V5d/V5f training datasets differ")
     return report
 
 
@@ -292,7 +294,7 @@ def make_diagnostic(student, source_path, target_path, provenance, source_pools,
 
 def preflight(config_path, training_seed=None):
     # Local import avoids a module-level cycle with the evaluation entry point.
-    from evaluation.hda_v5e import load_v5b_calibration
+    from evaluation.hda_v5f import load_v5b_calibration
 
     context = load_context(config_path, training_seed)
     config, protocol, provenance, *_ = context
@@ -318,7 +320,7 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0,
     output = checkpoint_path(config)
     if output.exists() and not profile_steps:
         raise FileExistsError(f"Checkpoint already exists: {output}")
-    profile_path = resolve_path(profile_output or f"results/hda_v5e/profiles/{profile_kernel}_seed{config['training_seed']}.json")
+    profile_path = resolve_path(profile_output or f"results/hda_v5f/profiles/{profile_kernel}_seed{config['training_seed']}.json")
     if profile_steps and profile_path.exists():
         raise FileExistsError(f"Profile already exists: {profile_path}; choose --profile-output")
     set_seed(config["training_seed"])
@@ -339,7 +341,7 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0,
     needs_conditional = any(config["loss_weights"][k] > 0 for k in ("normal", "attack"))
     target_pools = None
     pseudo = {"used_for_training": False}
-    producer_files = ("src/training/hda_v5e.py", "src/training/v5e_performance.py", "src/evaluation/hda_v5b_calibration.py",
+    producer_files = ("src/training/hda_v5f.py", "src/training/v5e_performance.py", "src/evaluation/hda_v5b_calibration.py",
                       "src/training/hda_v4.py", "src/training/v6_data.py",
                       "src/models/hda_v1.py", "src/models/baseline.py")
     common_dependencies = {"schema": 1, "torch": str(torch.__version__),
@@ -401,7 +403,7 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0,
     del v5d, v5d_checkpoint
     startup["diagnostic_seconds"] = time.perf_counter() - started
     print(f"Startup timings: {startup}", flush=True)
-    print(f"V5e | device={device} | source weights={class_weights.tolist()}", flush=True)
+    print(f"V5f | device={device} | source weights={class_weights.tolist()}", flush=True)
     profile = {}
     history = train_model(
         student, teacher, make_loader(source_path, provenance["source_dim"], batch_size, training=True),
@@ -428,7 +430,7 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0,
         raise ValueError("Frozen inputs changed during training")
     load_v5d_reference(config, protocol, provenance)
     checkpoint = {
-        "version": "v5e", "architecture": "hda_v5e",
+        "version": "v5f", "architecture": "hda_v5f",
         "training_seed": config["training_seed"], "teacher_seed": config["teacher_seed"],
         "classifier_only": config["classifier_only"],
         "provenance": provenance, "code_sha256": code, "training_data": snapshots,
@@ -455,7 +457,7 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/hda_v5e.json")
+    parser.add_argument("--config", default="configs/hda_v5f.json")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--training-seed", type=int, choices=(42, 43, 44))
     parser.add_argument("--preflight-only", action="store_true",

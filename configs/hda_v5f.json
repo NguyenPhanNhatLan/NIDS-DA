@@ -1,6 +1,12 @@
 {
-  "experiment_id": "v5e_1_mkmmd_source_ce_seed42",
-  "kernel_scales": [0.25, 0.5, 1.0, 2.0, 4.0],
+  "experiment_id": "v5f_attack_mkmmd_0p05_seed42",
+  "kernel_scales": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0
+  ],
   "log_every_steps": 200,
   "kernel_debug_every_steps": 0,
   "pool_cache_dir": "results/hda_v5e/pool_cache_v1",
@@ -16,11 +22,17 @@
   "source_metadata": "data/features/unsw_metadata.json",
   "source_validation": "data/features/unsw_val",
   "adapter_lr": 0.0001,
-  "classifier_lr": 0.00001,
+  "classifier_lr": 1e-05,
   "weight_decay": 0.0001,
-  "loss_weights": {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10, "source": 0.10},
+  "loss_weights": {
+    "hidden": 1.0,
+    "normal": 0.05,
+    "attack": 0.05,
+    "rank": 0.1,
+    "source": 0.1
+  },
   "calibration_max_fpr": 0.02,
-  "checkpoint_dir": "models/hda_v5e/optimized_v1/affine_fpr_0p02",
-  "calibration_dir": "results/hda_v5e/optimized_v1/affine_fpr_0p02/calibration",
-  "result_dir": "results/hda_v5e/optimized_v1/affine_fpr_0p02/development"
+  "checkpoint_dir": "models/hda_v5f/attack_0p05",
+  "calibration_dir": "results/hda_v5f/attack_0p05/calibration",
+  "result_dir": "results/hda_v5f/attack_0p05/development"
 }

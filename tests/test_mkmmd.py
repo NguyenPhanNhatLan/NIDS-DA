@@ -1,9 +1,11 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from training.adaptation import mmd_loss
-from training.mkmmd import mk_mmd_loss
+from training.mkmmd import mk_mmd_loss, MKMMDLoss
+from training.v5e_performance import legacy_mk_mmd_loss
 
 
 class MKMMDTests(unittest.TestCase):
@@ -65,6 +67,45 @@ class MKMMDTests(unittest.TestCase):
                      (self.s, self.t.float()), (self.s * float('nan'), self.t)):
             with self.assertRaises(ValueError):
                 mk_mmd_loss(s, t)
+
+    def test_one_cdist_and_one_exp(self):
+        with (patch("torch.cdist", wraps=torch.cdist) as distances,
+              patch("torch.exp", wraps=torch.exp) as exponential):
+            mk_mmd_loss(self.s, self.t)
+        self.assertEqual(distances.call_count, 1)
+        self.assertEqual(exponential.call_count, 1)
+
+    def compare_legacy(self, device, dtype, atol, rtol):
+        generator = torch.Generator().manual_seed(9)
+        s = torch.randn(40, 8, generator=generator, dtype=dtype).to(device)
+        t = torch.randn(43, 8, generator=generator, dtype=dtype).to(device)
+        scales = (.25, .5, 1., 2., 4.)
+        for base in (None, 2.3):
+            a, b = s.clone().requires_grad_(), t.clone().requires_grad_()
+            old, old_sigma = legacy_mk_mmd_loss(a, b, scales, bandwidth_squared=base)
+            old_grad = torch.autograd.grad(old, (a, b))
+            c, d = s.clone().requires_grad_(), t.clone().requires_grad_()
+            new, new_sigma = mk_mmd_loss(c, d, scales, bandwidth_squared=base)
+            new_grad = torch.autograd.grad(new, (c, d))
+            torch.testing.assert_close(new, old, atol=atol, rtol=rtol)
+            torch.testing.assert_close(new_sigma, old_sigma, atol=atol, rtol=rtol)
+            for actual, expected in zip(new_grad, old_grad):
+                torch.testing.assert_close(actual, expected, atol=atol, rtol=rtol)
+
+    def test_legacy_loss_and_gradient_cpu(self):
+        self.compare_legacy("cpu", torch.float64, 1e-9, 1e-6)
+
+    @unittest.skipUnless(torch.backends.mps.is_available(), "MPS unavailable")
+    def test_legacy_loss_and_gradient_mps(self):
+        self.compare_legacy("mps", torch.float32, 2e-5, 2e-3)
+
+    def test_cached_scales_and_debug_check(self):
+        kernel = MKMMDLoss().to(dtype=torch.float64)
+        result, _ = kernel(self.s, self.t)
+        expected, _ = mk_mmd_loss(self.s, self.t)
+        torch.testing.assert_close(result, expected)
+        with self.assertRaises(ValueError):
+            kernel(self.s * float('nan'), self.t, validate=True)
 
 
 if __name__ == '__main__':
