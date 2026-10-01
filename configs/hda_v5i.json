@@ -1,0 +1,43 @@
+{
+  "experiment_id": "v5i_gradient_balanced_seed42",
+  "kernel_scales": [
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0
+  ],
+  "geometry_weight_power": 2.0,
+  "conditional_anchor_mass": 0.5,
+  "exclude_q98_plus": true,
+  "log_every_steps": 200,
+  "kernel_debug_every_steps": 0,
+  "pool_cache_dir": "results/hda_v5e/pool_cache_v1",
+  "geometry_cache_dir": "results/hda_v5i/pool_cache_v1",
+  "v5d_reference_report": "results/hda_v5d/affine_fpr_0p02/development/v5d_vs_v5b_seed42.json",
+  "v5d_reference_sha256": "8166313b3785a751e5fc675f5872ee29be81849413b7e556a69869afbfbbcddf",
+  "v5d_reference_checkpoint": "models/hda_v5d/affine_fpr_0p02/v5d_seed42.pt",
+  "v5f_reference_report": "results/hda_v5f/attack_0p05/development/v5f_vs_v5b_seed42.json",
+  "stage1_reference": "configs/hda_stage1_frozen.json",
+  "teacher_seed": 42,
+  "training_seed": 42,
+  "classifier_only": false,
+  "v5b_calibration": "results/hda_v5b/asymmetric/calibration/fpr_0p02_seed42.json",
+  "v5b_calibration_payload_sha256": "32e679eacb8ea3a4670c4026c9a1ffe85e7dfbb82392ed066e931a154d9d2c01",
+  "source_metadata": "data/features/unsw_metadata.json",
+  "source_validation": "data/features/unsw_val",
+  "adapter_lr": 0.0001,
+  "classifier_lr": 1e-05,
+  "weight_decay": 0.0001,
+  "loss_weights": {
+    "hidden": 0.1,
+    "normal": 0.05,
+    "attack": 0.08,
+    "rank": 0.1,
+    "source": 0.1
+  },
+  "calibration_max_fpr": 0.02,
+  "checkpoint_dir": "models/hda_v5i/gradient_balanced",
+  "calibration_dir": "results/hda_v5i/gradient_balanced/calibration",
+  "result_dir": "results/hda_v5i/gradient_balanced/development"
+}
