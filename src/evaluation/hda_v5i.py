@@ -1,4 +1,4 @@
-"""V5i calibration/report with frozen V5b/V5d/V5f references."""
+"""V5i calibration/report with frozen V5b/V5d/V5f/V5h references."""
 import argparse
 import json
 import math
@@ -33,6 +33,7 @@ def dependencies(config, provenance):
         "v5b_calibration_file_sha256": file_hash(resolve_path(config["v5b_calibration"])),
         "v5d_reference_sha256": file_hash(resolve_path(config["v5d_reference_report"])),
         "v5d_reference_checkpoint_sha256": file_hash(resolve_path(config["v5d_reference_checkpoint"])),
+        "v5h_reference_sha256": file_hash(resolve_path(config["v5h_reference_report"])),
     }
 
 
@@ -47,9 +48,33 @@ def load_v5f_reference(config, protocol):
     return report, file_hash(path)
 
 
+def load_v5h_reference(config, protocol):
+    path = resolve_path(config["v5h_reference_report"])
+    digest = file_hash(path)
+    if digest != config["v5h_reference_sha256"]:
+        raise ValueError("Pinned V5h reference report changed")
+    report = json.loads(path.read_text())
+    if (report.get("phase") != "development"
+            or report.get("training_seed") != config["training_seed"]
+            or report.get("teacher_seed") != config["teacher_seed"]
+            or report.get("classifier_only") != config["classifier_only"]
+            or report.get("max_source_fpr") != config["calibration_max_fpr"]
+            or resolve_path(report["target_data"]).resolve() != evaluation_target(protocol, "development").resolve()
+            or "v5h" not in report.get("metrics", {})):
+        raise ValueError("V5h reference report is incompatible with V5i comparison")
+    for name in ("pr_auc", "roc_auc", "f1", "recall", "fpr"):
+        value = report["metrics"]["v5h"].get(name)
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"Invalid V5h reference metric: {name}")
+    if report["development_files"] != data_snapshot(evaluation_target(protocol, "development")):
+        raise ValueError("V5h/V5i development snapshots differ")
+    return report, digest
+
+
 def fit(config_path, training_seed=None):
     config, protocol, provenance, source, v2, teacher = load_context(config_path, training_seed)
     load_v5d_reference(config, protocol, provenance)
+    load_v5h_reference(config, protocol)
     output = calibration_path(config)
     if output.exists():
         raise FileExistsError(f"Calibration already exists: {output}")
@@ -116,7 +141,8 @@ def report(config_path, training_seed=None):
     config, protocol, provenance, source, _, teacher = load_context(config_path, training_seed)
     v5d_reference = load_v5d_reference(config, protocol, provenance)
     v5f_reference, v5f_reference_sha = load_v5f_reference(config, protocol)
-    output = resolve_path(config["result_dir"]) / f"v5i_vs_v5f_seed{config['training_seed']}.json"
+    v5h_reference, v5h_reference_sha = load_v5h_reference(config, protocol)
+    output = resolve_path(config["result_dir"]) / f"v5i_vs_v5h_seed{config['training_seed']}.json"
     if output.exists():
         raise FileExistsError(f"Report already exists: {output}")
 
@@ -169,6 +195,7 @@ def report(config_path, training_seed=None):
         "v5b": operating["v5b"]["calibrated"],
         "v5d": v5d_reference["metrics"]["v5d"],
         "v5f": v5f_reference["metrics"]["v5f"],
+        "v5h": v5h_reference["metrics"]["v5h"],
         "v5i": operating["v5i"]["calibrated"],
     }
     result = {
@@ -183,6 +210,8 @@ def report(config_path, training_seed=None):
         "dependencies": deps,
         "v5f_reference_report": config["v5f_reference_report"],
         "v5f_reference_sha256": v5f_reference_sha,
+        "v5h_reference_report": config["v5h_reference_report"],
+        "v5h_reference_sha256": v5h_reference_sha,
         "source_thresholds": frozen["thresholds"],
         "parameters": frozen["parameters"],
         "max_source_fpr": frozen["max_source_fpr"],
@@ -190,6 +219,7 @@ def report(config_path, training_seed=None):
         "target_labels_used_for_training_or_calibration": False,
         "metrics": metrics,
         "operating_points": operating,
+        "delta_v5i_minus_v5h": {k: metrics["v5i"][k] - metrics["v5h"][k] for k in names},
         "delta_v5i_minus_v5f": {k: metrics["v5i"][k] - metrics["v5f"][k] for k in names},
         "delta_v5i_minus_v5d": {k: metrics["v5i"][k] - metrics["v5d"][k] for k in names},
         "delta_v5i_minus_v5b": {k: metrics["v5i"][k] - metrics["v5b"][k] for k in names},
@@ -208,9 +238,10 @@ def report(config_path, training_seed=None):
         stream.write("\n")
 
     print("Model | AP | ROC-AUC | F1 | Recall | FPR")
-    for name in ("v5b", "v5d", "v5f", "v5i"):
+    for name in ("v5b", "v5d", "v5f", "v5h", "v5i"):
         print(name.upper() + " | " + " | ".join(f"{metrics[name][k]:.6f}" for k in names))
     print(f"Calibrated delta V5i - V5f: {result['delta_v5i_minus_v5f']}")
+    print(f"Calibrated delta V5i - V5h: {result['delta_v5i_minus_v5h']}")
     print(f"Saved: {output}")
 
 

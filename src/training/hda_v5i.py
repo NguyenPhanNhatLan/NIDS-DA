@@ -394,18 +394,22 @@ def train_model(student, teacher, source_loader, target_loader, source_pools,
 
 def preflight(config_path, training_seed=None):
     from evaluation.hda_v5f import load_v5b_calibration
+    from evaluation.hda_v5i import load_v5h_reference
     context = load_context(config_path, training_seed)
     config, protocol, provenance, *_ = context
     load_v5b_calibration(config, protocol, provenance)
     load_v5d_reference(config, protocol, provenance)
+    load_v5h_reference(config, protocol)
     print("Stage 1 checkpoint: VERIFIED", flush=True)
     print("V5b calibration: VERIFIED", flush=True)
     print("V5d reference: VERIFIED", flush=True)
+    print("V5h reference: VERIFIED", flush=True)
     for name in (
         "teacher_seed", "training_seed", "classifier_only", "calibration_max_fpr",
         "geometry_weight_power", "conditional_anchor_mass", "exclude_q98_plus",
     ):
         print(f"{name}: {config[name]}", flush=True)
+    print(f"loss_weights: {config['loss_weights']}", flush=True)
     return context
 
 
@@ -594,7 +598,8 @@ def run(config_path, device_name="auto", training_seed=None, profile_steps=0, pr
         raise ValueError("Training data or code changed during training")
     _, _, current_provenance, *_ = load_context(config_path, training_seed)
     if (current_provenance != provenance
-            or file_hash(resolve_path(config["v5b_calibration"])) != calibration_hash):
+            or file_hash(resolve_path(config["v5b_calibration"])) != calibration_hash
+            or file_hash(resolve_path(config["v5h_reference_report"])) != config["v5h_reference_sha256"]):
         raise ValueError("Frozen inputs changed during training")
     load_v5d_reference(config, protocol, provenance)
 

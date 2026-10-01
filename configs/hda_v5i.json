@@ -39,5 +39,7 @@
   "calibration_max_fpr": 0.02,
   "checkpoint_dir": "models/hda_v5i/gradient_balanced",
   "calibration_dir": "results/hda_v5i/gradient_balanced/calibration",
-  "result_dir": "results/hda_v5i/gradient_balanced/development"
+  "result_dir": "results/hda_v5i/gradient_balanced/development",
+  "v5h_reference_report": "results/hda_v5h/asymmetric_selective/development/v5h_vs_v5f_seed42.json",
+  "v5h_reference_sha256": "7bb1ea549d31f6abefa4ddde7f13f4c903a8bcbbdd857c4dd340679493b81478"
 }
