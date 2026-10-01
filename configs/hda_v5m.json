@@ -1,0 +1,10 @@
+{
+  "experiment_id": "v5m_v5d_adapter_source_classifier_seed42",
+  "v5d_config": "configs/hda_v5d.json",
+  "training_seed": 42,
+  "source_validation": "data/features/unsw_val",
+  "calibration_max_fpr": 0.02,
+  "checkpoint_dir": "models/hda_v5m/adapter_swap",
+  "calibration_dir": "results/hda_v5m/adapter_swap/calibration",
+  "result_dir": "results/hda_v5m/adapter_swap/development"
+}

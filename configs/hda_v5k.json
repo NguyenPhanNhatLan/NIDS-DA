@@ -1,0 +1,26 @@
+{
+  "experiment_id": "v5k_v5b_anchor_latent_vat_seed42",
+  "parent_protocol": "configs/hda_thesis_protocol.json",
+  "evaluation_revision": "configs/hda_evaluation_v2.json",
+  "checkpoint_dir": "models/hda_v5k/anchor_latent_vat",
+  "calibration_dir": "results/hda_v5k/anchor_latent_vat/calibration",
+  "result_dir": "results/hda_v5k/anchor_latent_vat/development",
+  "architecture": "hda_v1",
+  "loss_weights": {
+    "hidden": 1.0,
+    "normal": 0.05,
+    "attack": 0.02,
+    "rank": 0.1
+  },
+  "vat": {
+    "weight": 0.1,
+    "epsilon_ratio": 0.05,
+    "xi_ratio": 0.001,
+    "power_iterations": 1
+  },
+  "source_validation": "data/features/unsw_val",
+  "calibration_max_fpr": 0.01,
+  "v5b_reference_report": "results/hda_v5b/asymmetric/development/v5b_calibrated_seed42.json",
+  "v5b_reference_sha256": "4f4ef0c780a838fb9caffeb598e289f0db0f461f8ed6753896f6332706b278ca",
+  "v5b_reference_seed": 42
+}

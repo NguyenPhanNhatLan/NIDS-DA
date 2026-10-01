@@ -34,7 +34,7 @@ VAT:
 PYTHONPATH=src .venv/bin/python -u -m training.hda_v5j --preflight-only --seed 42
 ```
 
-The default calibrated V5b reference uses a 1% source FPR budget. Its SHA-256 and seed are pinned in the config. Additional seeds require their corresponding reference report and pin. Code hashes include training and evaluation. Existing checkpoints are never overwritten.
+The default calibrated V5b reference uses a 2% source FPR budget. Its SHA-256 and seed are pinned in the config. Additional seeds require their corresponding reference report and pin. Code hashes include training and evaluation. Existing checkpoints are never overwritten.
 
 ## Test
 ```bash

@@ -1,0 +1,12 @@
+{
+  "experiment_id": "v5l_v5b_adapter_refinement_seed42",
+  "stage1_reference": "configs/hda_stage1_frozen.json",
+  "teacher_seed": 42,
+  "training_seed": 42,
+  "adapter_lr": 0.0001,
+  "weight_decay": 0.0001,
+  "loss_weights": {"hidden": 1.0, "normal": 0.05, "attack": 0.02, "rank": 0.10},
+  "epochs": 10,
+  "checkpoint_dir": "models/hda_v5l/adapter_refinement",
+  "result_dir": "results/hda_v5l/adapter_refinement/development"
+}
