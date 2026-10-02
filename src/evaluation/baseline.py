@@ -18,7 +18,6 @@ from sklearn.metrics import (
 
 from models.baseline import BaselineMLP
 
-
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -52,14 +51,16 @@ def evaluate(model, loader, domain_name):
 
     print(f"\nKẾT QUẢ: {domain_name}")
 
-    print(classification_report(
-        labels,
-        predictions,
-        labels=[0, 1],
-        target_names=["Normal", "Attack"],
-        digits=4,
-        zero_division=0,
-    ))
+    print(
+        classification_report(
+            labels,
+            predictions,
+            labels=[0, 1],
+            target_names=["Normal", "Attack"],
+            digits=4,
+            zero_division=0,
+        )
+    )
 
     matrix = confusion_matrix(labels, predictions, labels=[0, 1])
     print("Confusion matrix [[TN, FP], [FN, TP]]:")
@@ -71,13 +72,12 @@ def evaluate(model, loader, domain_name):
     else:
         print("Không tính được ROC-AUC vì tập đánh giá chỉ có một lớp.")
 
+
 def collect_scores(
     model,
     loader,
 ):
-    device = next(
-        model.parameters()
-    ).device
+    device = next(model.parameters()).device
 
     model.eval()
 
@@ -87,39 +87,25 @@ def collect_scores(
     with torch.no_grad():
         for features, labels in loader:
 
-            features = features.to(
-                device
-            )
+            features = features.to(device)
 
-            _, logits = model(
-                features
-            )
+            _, logits = model(features)
 
             probabilities = torch.softmax(
                 logits,
                 dim=1,
             )[:, 1]
 
-            all_labels.append(
-                labels.numpy()
-            )
+            all_labels.append(labels.numpy())
 
-            all_scores.append(
-                probabilities
-                .cpu()
-                .numpy()
-            )
+            all_scores.append(probabilities.cpu().numpy())
 
     if not all_labels:
         raise ValueError("Evaluation loader is empty.")
 
     return (
-        np.concatenate(
-            all_labels
-        ),
-        np.concatenate(
-            all_scores
-        ),
+        np.concatenate(all_labels),
+        np.concatenate(all_scores),
     )
 
 
@@ -127,11 +113,9 @@ def select_f1_threshold(
     labels,
     scores,
 ):
-    precision, recall, thresholds = (
-        precision_recall_curve(
-            labels,
-            scores,
-        )
+    precision, recall, thresholds = precision_recall_curve(
+        labels,
+        scores,
     )
 
     if len(thresholds) == 0:
@@ -140,26 +124,18 @@ def select_f1_threshold(
     precision = precision[:-1]
     recall = recall[:-1]
 
-    denominator = (
-        precision + recall
-    )
+    denominator = precision + recall
 
     f1 = np.divide(
         2 * precision * recall,
         denominator,
-        out=np.zeros_like(
-            denominator
-        ),
+        out=np.zeros_like(denominator),
         where=denominator > 0,
     )
 
-    best_index = int(
-        np.argmax(f1)
-    )
+    best_index = int(np.argmax(f1))
 
-    return float(
-        thresholds[best_index]
-    )
+    return float(thresholds[best_index])
 
 
 def compute_metrics(
@@ -167,17 +143,13 @@ def compute_metrics(
     scores,
     threshold,
 ):
-    predictions = (
-        scores >= threshold
-    ).astype(int)
+    predictions = (scores >= threshold).astype(int)
 
-    tn, fp, fn, tp = (
-        confusion_matrix(
-            labels,
-            predictions,
-            labels=[0, 1],
-        ).ravel()
-    )
+    tn, fp, fn, tp = confusion_matrix(
+        labels,
+        predictions,
+        labels=[0, 1],
+    ).ravel()
 
     ap = average_precision_score(
         labels,
@@ -204,21 +176,22 @@ def compute_metrics(
         zero_division=0,
     )
 
+    macro_f1 = f1_score(
+        labels,
+        predictions,
+        average="macro",
+        zero_division=0,
+    )
+
     f1 = f1_score(
         labels,
         predictions,
         zero_division=0,
     )
 
-    fpr = (
-        fp / (fp + tn)
-        if (fp + tn) > 0
-        else 0.0
-    )
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
 
-    prevalence = float(
-        np.mean(labels)
-    )
+    prevalence = float(np.mean(labels))
 
     return {
         "pr_auc": float(ap),
@@ -226,6 +199,8 @@ def compute_metrics(
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
+        "f1_attack": float(f1), 
+        "macro_f1": float(macro_f1),
         "fpr": float(fpr),
         "prevalence": prevalence,
         "threshold": float(threshold),
@@ -253,9 +228,7 @@ def evaluate_dataset(dataset, seed=42):
     # Import trong hàm để training có thể dùng evaluate_ap mà không bị import vòng.
     from training.baseline import make_loader
 
-    checkpoint_path = (
-        PROJECT_DIR / "models" / "baselines" / f"{dataset}_seed{seed}.pt"
-    )
+    checkpoint_path = PROJECT_DIR / "models" / "baselines" / f"{dataset}_seed{seed}.pt"
     device = torch.device("cpu")
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     if checkpoint["dataset"] != dataset or checkpoint["seed"] != seed:
@@ -285,8 +258,7 @@ def evaluate_dataset(dataset, seed=42):
 
     row = {
         "experiment": (
-            "Source supervised" if dataset == "unsw"
-            else "Target supervised reference"
+            "Source supervised" if dataset == "unsw" else "Target supervised reference"
         ),
         "feature_space": f"{dataset.upper()} full",
         "train_domain": dataset.upper(),
@@ -303,8 +275,10 @@ def evaluate_dataset(dataset, seed=42):
         json.dump(row, file, indent=2)
 
     print(f"{row['experiment']} | seed={seed} | threshold={threshold:.4f}")
-    print(f"AP={row['pr_auc']:.4f} | ROC-AUC={row['roc_auc']:.4f} | "
-          f"F1={row['f1']:.4f} | Recall={row['recall']:.4f} | FPR={row['fpr']:.4f}")
+    print(
+        f"AP={row['pr_auc']:.4f} | ROC-AUC={row['roc_auc']:.4f} | "
+        f"F1={row['f1']:.4f} | Recall={row['recall']:.4f} | FPR={row['fpr']:.4f}"
+    )
     print(f"Saved: {output_path}")
     return row
 
