@@ -11,25 +11,18 @@ import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / "configs/common_features_v1.json"
-COMMON_FEATURES = tuple(item["canonical_name"] for item in json.loads(DEFAULT_CONFIG.read_text()))
-
-
-def load_common_feature_config(path=DEFAULT_CONFIG):
-    config = json.loads(Path(path).read_text())
-    required = {"canonical_name", "unsw", "cicids", "direction", "transform", "reason"}
-    if not isinstance(config, list) or not config or any(not required <= item.keys() for item in config):
-        raise ValueError("Common feature config requires a nonempty list with all six fields")
-    names = [item["canonical_name"] for item in config]
-    if len(names) != len(set(names)):
-        raise ValueError("Duplicate canonical feature name")
-    return config
+COMMON_FEATURES = tuple(
+    item["canonical_name"] for item in json.loads(DEFAULT_CONFIG.read_text())
+)
 
 
 def _numeric(frame, item, domain):
     column = item[domain]
     if column not in frame.columns:
         raise ValueError(f"Missing configured {domain} source column: {column}")
-    values = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=np.float64, na_value=np.nan)
+    values = pd.to_numeric(frame[column], errors="coerce").to_numpy(
+        dtype=np.float64, na_value=np.nan, copy=True
+    )
     values[~np.isfinite(values)] = np.nan
     rule = item["transform"]
     if rule == "cicids_us_to_seconds" and domain == "cicids":
@@ -41,6 +34,33 @@ def _numeric(frame, item, domain):
     return values
 
 
+def load_common_feature_config(path=DEFAULT_CONFIG):
+    config = json.loads(Path(path).read_text())
+
+    required = {
+        "canonical_name",
+        "unsw",
+        "cicids",
+        "direction",
+        "transform",
+        "reason",
+    }
+
+    if (
+        not isinstance(config, list)
+        or not config
+        or any(not required <= item.keys() for item in config)
+    ):
+        raise ValueError("Invalid common feature config")
+
+    names = [item["canonical_name"] for item in config]
+
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate canonical names")
+
+    return config
+
+
 def fit_common_feature_pipeline(train_df, domain, config=None):
     if domain not in {"unsw", "cicids"}:
         raise ValueError(f"Unknown domain: {domain}")
@@ -49,8 +69,14 @@ def fit_common_feature_pipeline(train_df, domain, config=None):
     for item in config:
         values = _numeric(train_df, item, domain)
         finite = values[np.isfinite(values)]
-        medians[item["canonical_name"]] = float(np.median(finite)) if len(finite) else 0.0
-    return {"domain": domain, "features": [item["canonical_name"] for item in config], "medians": medians}
+        medians[item["canonical_name"]] = (
+            float(np.median(finite)) if len(finite) else 0.0
+        )
+    return {
+        "domain": domain,
+        "features": [item["canonical_name"] for item in config],
+        "medians": medians,
+    }
 
 
 def transform_common_features(df, domain, fitted_state=None, config=None):
@@ -75,11 +101,205 @@ def transform_common_features(df, domain, fitted_state=None, config=None):
     return output
 
 
+def canonicalize_column(
+    frame,
+    item,
+    domain,
+):
+    if domain not in {
+        "unsw",
+        "cicids",
+    }:
+        raise ValueError(f"Unknown domain: {domain}")
+
+    source_column = item[domain]
+
+    if source_column not in frame.columns:
+        raise ValueError(f"Missing {domain} column: " f"{source_column}")
+
+    values = pd.to_numeric(
+        frame[source_column],
+        errors="coerce",
+    ).to_numpy(
+        dtype=np.float64,
+        na_value=np.nan,
+        copy=True,
+    )
+
+    values[~np.isfinite(values)] = np.nan
+
+    transform = item["transform"]
+
+    if transform == "cicids_us_to_seconds":
+
+        if domain == "cicids":
+            values /= 1_000_000.0
+
+    elif transform == "unsw_ms_cicids_us_to_seconds":
+
+        if domain == "unsw":
+            values /= 1_000.0
+
+        else:
+            values /= 1_000_000.0
+
+    elif transform == "none":
+        pass
+
+    else:
+        raise ValueError(f"Unknown transform: {transform}")
+
+    return values.astype(np.float32)
+
+
+def canonicalize_frame(
+    frame,
+    domain,
+    config,
+):
+    if domain not in {"unsw", "cicids"}:
+        raise ValueError(domain)
+
+    result = {}
+
+    for item in config:
+
+        result[item["canonical_name"]] = canonicalize_column(
+            frame,
+            item,
+            domain,
+        )
+
+    output = pd.DataFrame(result)
+
+    if "label" not in frame.columns:
+        raise ValueError("Missing label")
+
+    output["label"] = (
+        pd.to_numeric(
+            frame["label"],
+            errors="raise",
+        )
+        .astype(np.int64)
+        .to_numpy()
+    )
+
+    return output
+
+
 def _input_files(directory):
     files = sorted(directory.glob("*.parquet"))
     if not files:
         raise FileNotFoundError(f"No Parquet files in {directory}")
     return files
+
+
+def generate_raw_common_feature_datasets(
+    split_root=ROOT / "data/splits",
+    output_root=ROOT / "data/features/common_raw",
+    config_path=DEFAULT_CONFIG,
+):
+    config = load_common_feature_config(config_path)
+
+    split_root = Path(split_root)
+    output_root = Path(output_root)
+
+    names = [item["canonical_name"] for item in config]
+
+    for domain in ("unsw", "cicids"):
+
+        source_columns = [item[domain] for item in config]
+
+        for split in ("train", "val", "test"):
+
+            source_dir = split_root / f"{domain}_{split}"
+
+            for path in _input_files(source_dir):
+
+                available = set(pq.read_schema(path).names)
+
+                required = set(source_columns + ["label"])
+
+                missing = required - available
+
+                if missing:
+                    raise ValueError(
+                        f"Missing configured columns " f"in {path}: {sorted(missing)}"
+                    )
+
+        for split in ("train", "val", "test"):
+
+            source_dir = split_root / f"{domain}_{split}"
+
+            destination = output_root / f"{domain}_{split}"
+
+            if destination.exists():
+                raise FileExistsError(f"Output already exists: " f"{destination}")
+
+            destination.mkdir(
+                parents=True,
+                exist_ok=False,
+            )
+
+            for file_index, source in enumerate(_input_files(source_dir)):
+
+                with pq.ParquetFile(source) as parquet:
+
+                    for batch_index, batch in enumerate(
+                        parquet.iter_batches(
+                            batch_size=65536,
+                            columns=source_columns + ["label"],
+                        )
+                    ):
+
+                        transformed = canonicalize_frame(
+                            batch.to_pandas(),
+                            domain,
+                            config,
+                        )
+
+                        matrix = transformed[names].to_numpy(
+                            dtype=np.float32,
+                            copy=True,
+                        )
+
+                        vectors = pa.array(
+                            matrix.tolist(),
+                            type=pa.list_(
+                                pa.float32(),
+                                len(names),
+                            ),
+                        )
+
+                        labels = transformed["label"].to_numpy(dtype=np.int64)
+
+                        if not np.isin(
+                            labels,
+                            [0, 1],
+                        ).all():
+                            raise ValueError(f"Invalid binary labels " f"in {source}")
+
+                        table = pa.table(
+                            {
+                                "features": vectors,
+                                "label": pa.array(labels),
+                            }
+                        )
+
+                        output_file = destination / (
+                            f"part-"
+                            f"{file_index:04d}-"
+                            f"{batch_index:04d}"
+                            ".parquet"
+                        )
+
+                        pq.write_table(
+                            table,
+                            output_file,
+                            compression="snappy",
+                        )
+
+    return names
 
 
 def _read_training_columns(directory, columns):
@@ -89,7 +309,11 @@ def _read_training_columns(directory, columns):
     return pd.concat(chunks, ignore_index=True)
 
 
-def generate_common_feature_datasets(split_root=ROOT / "data/splits", output_root=ROOT / "data/features/common_v1", config_path=DEFAULT_CONFIG):
+def generate_common_feature_datasets(
+    split_root=ROOT / "data/splits",
+    output_root=ROOT / "data/features/common_raw",
+    config_path=DEFAULT_CONFIG,
+):
     config = load_common_feature_config(config_path)
     split_root, output_root = Path(split_root), Path(output_root)
     names = [item["canonical_name"] for item in config]
@@ -99,7 +323,9 @@ def generate_common_feature_datasets(split_root=ROOT / "data/splits", output_roo
             for path in _input_files(split_root / f"{domain}_{split}"):
                 missing = set(columns + ["label"]) - set(pq.read_schema(path).names)
                 if missing:
-                    raise ValueError(f"Missing configured columns in {path}: {sorted(missing)}")
+                    raise ValueError(
+                        f"Missing configured columns in {path}: {sorted(missing)}"
+                    )
         train = _read_training_columns(split_root / f"{domain}_train", columns)
         state = fit_common_feature_pipeline(train, domain, config)
         del train
@@ -111,19 +337,40 @@ def generate_common_feature_datasets(split_root=ROOT / "data/splits", output_roo
             destination.mkdir(parents=True, exist_ok=True)
             for source in _input_files(split_root / f"{domain}_{split}"):
                 with pq.ParquetFile(source) as parquet:
-                    for batch_index, batch in enumerate(parquet.iter_batches(batch_size=65536, columns=columns + ["label"])):
-                        transformed = transform_common_features(batch.to_pandas(), domain, state, config)
-                        matrix = transformed[names].to_numpy(dtype=np.float32, copy=True)
-                        vectors = pa.array(matrix.tolist(), type=pa.list_(pa.float32(), len(names)))
-                        table = pa.table({"features": vectors, "label": pa.array(transformed["label"].to_numpy())})
-                        pq.write_table(table, destination / f"{source.stem}-{batch_index:04d}.parquet", compression="snappy")
+                    for batch_index, batch in enumerate(
+                        parquet.iter_batches(
+                            batch_size=65536, columns=columns + ["label"]
+                        )
+                    ):
+                        transformed = transform_common_features(
+                            batch.to_pandas(), domain, state, config
+                        )
+                        matrix = transformed[names].to_numpy(
+                            dtype=np.float32, copy=True
+                        )
+                        vectors = pa.array(
+                            matrix.tolist(), type=pa.list_(pa.float32(), len(names))
+                        )
+                        table = pa.table(
+                            {
+                                "features": vectors,
+                                "label": pa.array(transformed["label"].to_numpy()),
+                            }
+                        )
+                        pq.write_table(
+                            table,
+                            destination / f"{source.stem}-{batch_index:04d}.parquet",
+                            compression="snappy",
+                        )
     return names
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split-root", type=Path, default=ROOT / "data/splits")
-    parser.add_argument("--output-root", type=Path, default=ROOT / "data/features/common_v1")
+    parser.add_argument(
+        "--output-root", type=Path, default=ROOT / "data/features/common_raw"
+    )
     args = parser.parse_args()
     names = generate_common_feature_datasets(args.split_root, args.output_root)
     print(f"Generated both domains with {len(names)} features: {', '.join(names)}")
