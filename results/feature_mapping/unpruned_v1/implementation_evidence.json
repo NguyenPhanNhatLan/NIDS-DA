@@ -1,0 +1,25 @@
+{
+  "scope": "Pinned upstream code inspected; exact historical UNSW/CICIDS extractor binaries, configs and packet capture provenance are not locally available. No unverified pair is promoted.",
+  "sources": [
+    {
+      "url": "https://github.com/ahlashkari/CICFlowMeter/blob/98a5ebad0df579cc8b43eedd3421b3ae87699901/src/main/java/cic/cs/unb/ca/jnetpcap/BasicFlow.java",
+      "sha256": "408feaefe77ef323c4279e68fbec30763cd9fc630aa75310ed1cf63e0cac0752",
+      "bytes": 37541
+    },
+    {
+      "url": "https://github.com/ahlashkari/CICFlowMeter/blob/98a5ebad0df579cc8b43eedd3421b3ae87699901/src/main/java/cic/cs/unb/ca/jnetpcap/PacketReader.java",
+      "sha256": "af2c08f298fef4fde099b8f2d833cf63ddc9ff88e46a82a4dee27481b6f6e2f3",
+      "bytes": 15352
+    },
+    {
+      "url": "https://github.com/openargus/clients/blob/e12739eb478900a2d7465ac24e75fad0b0bccd05/common/argus_client.c",
+      "sha256": "7511a381155e9ad69253b6302f7678deef663c4b605e157477ca2220cd3d8142",
+      "bytes": 714869
+    },
+    {
+      "url": "https://github.com/openargus/argus/blob/fc7a7a844e3f119d70f69963f2aec3ac0fdc068a/argus/ArgusModeler.c",
+      "sha256": "8172e9f63707fab4351e8a759df960b94ca2c810d2d0644fbf289cc330e67d00",
+      "bytes": 220428
+    }
+  ]
+}

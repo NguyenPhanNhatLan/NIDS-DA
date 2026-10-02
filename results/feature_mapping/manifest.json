@@ -1,0 +1,413 @@
+{
+  "protocol": {
+    "version": 1,
+    "source_domain": "unsw",
+    "training_paths": {
+      "unsw": "data/splits/unsw_train",
+      "cicids": "data/splits/cicids_train"
+    },
+    "candidates": "configs/feature_pair_candidates.json",
+    "output_dir": "results/feature_mapping",
+    "config_output_dir": "configs",
+    "sample_size": 100000,
+    "seeds": [
+      42,
+      43,
+      44,
+      45,
+      46
+    ],
+    "mi_seed": 42,
+    "epsilon": 1e-09,
+    "near_constant_fraction": 0.995,
+    "variance_threshold": 1e-12,
+    "weights": {
+      "KS_similarity": 0.4,
+      "W_similarity": 0.35,
+      "MI_similarity": 0.15,
+      "quality_score": 0.1
+    },
+    "lambda_redundancy": 0.2,
+    "top_k": [
+      10,
+      12,
+      14,
+      16
+    ]
+  },
+  "candidates": {
+    "version": 1,
+    "references": [
+      "https://research.unsw.edu.au/projects/unsw-nb15-dataset",
+      "https://www.unb.ca/cic/research/applications.html",
+      "https://github.com/ahlashkari/CICFlowMeter/blob/master/src/main/java/cic/cs/unb/ca/jnetpcap/BasicFlow.java"
+    ],
+    "pairs": [
+      {
+        "canonical_name": "flow_duration",
+        "unsw": "dur",
+        "cicids": "flow_duration",
+        "semantic_valid": true,
+        "direction": "flow",
+        "unit_unsw": "seconds",
+        "unit_cicids": "microseconds",
+        "conversion": "cicids_us_to_seconds",
+        "reason": "Elapsed first-to-last packet time of a bidirectional flow; convert microseconds to seconds.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_packets",
+        "unsw": "spkts",
+        "cicids": "total_fwd_packets",
+        "semantic_valid": true,
+        "direction": "forward",
+        "unit_unsw": "packets",
+        "unit_cicids": "packets",
+        "conversion": "identity",
+        "reason": "Number of packets in the source/forward direction of a flow.",
+        "log1p": true,
+        "discrete": true,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_packets",
+        "unsw": "dpkts",
+        "cicids": "total_backward_packets",
+        "semantic_valid": true,
+        "direction": "backward",
+        "unit_unsw": "packets",
+        "unit_cicids": "packets",
+        "conversion": "identity",
+        "reason": "Number of packets in the destination/backward direction; CICIDS column absent after historical pruning.",
+        "log1p": true,
+        "discrete": true,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_bytes",
+        "unsw": "sbytes",
+        "cicids": "total_length_of_fwd_packets",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "Unverified header versus payload accounting across Argus and CICFlowMeter.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_bytes",
+        "unsw": "dbytes",
+        "cicids": "total_length_of_bwd_packets",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "Unverified byte accounting; CICIDS column also absent.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_mean_size",
+        "unsw": "smeansz",
+        "cicids": "fwd_packet_length_mean",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "UNSW packet size versus CICFlowMeter payload-length statistics not established as identical.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_mean_size",
+        "unsw": "dmeansz",
+        "cicids": "bwd_packet_length_mean",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "Byte accounting unverified; CICIDS mean column absent.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_iat",
+        "unsw": "sintpkt",
+        "cicids": "fwd_iat_mean",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "milliseconds",
+        "unit_cicids": "microseconds",
+        "conversion": "iat_to_seconds",
+        "reason": "UNSW interpacket interval definition does not establish matching averaging, retransmission and singleton treatment.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_iat",
+        "unsw": "dintpkt",
+        "cicids": "bwd_iat_mean",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "milliseconds",
+        "unit_cicids": "microseconds",
+        "conversion": "iat_to_seconds",
+        "reason": "Matching interval estimator and singleton treatment not verified.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_jitter",
+        "unsw": "sjit",
+        "cicids": "fwd_iat_std",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "milliseconds",
+        "unit_cicids": "microseconds",
+        "conversion": "iat_to_seconds",
+        "reason": "Jitter is not established as standard deviation of packet interarrival times.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_jitter",
+        "unsw": "djit",
+        "cicids": "bwd_iat_std",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "milliseconds",
+        "unit_cicids": "microseconds",
+        "conversion": "iat_to_seconds",
+        "reason": "Jitter and interarrival standard deviation are different or unverified estimators.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_window",
+        "unsw": "swin",
+        "cicids": "init_win_bytes_forward",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "UNSW window summary not verified as initial advertised TCP window.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_window",
+        "unsw": "dwin",
+        "cicids": "init_win_bytes_backward",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "UNSW window summary not verified as initial advertised TCP window.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_load",
+        "unsw": "sload",
+        "cicids": "flow_bytes_s",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "bits/second",
+        "unit_cicids": "bytes/second",
+        "conversion": "identity",
+        "reason": "Direction mismatch: source load versus bidirectional flow throughput; byte accounting also differs.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "backward_load",
+        "unsw": "dload",
+        "cicids": "bwd_packets_s",
+        "semantic_valid": false,
+        "direction": "backward",
+        "unit_unsw": "bits/second",
+        "unit_cicids": "packets/second",
+        "conversion": "identity",
+        "reason": "Incompatible quantities: bit rate and packet rate.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "tcp_rtt",
+        "unsw": "tcprtt",
+        "cicids": "flow_iat_mean",
+        "semantic_valid": false,
+        "direction": "flow",
+        "unit_unsw": "seconds",
+        "unit_cicids": "microseconds",
+        "conversion": "identity",
+        "reason": "Handshake round-trip latency is not mean flow packet interarrival time.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_loss",
+        "unsw": "sloss",
+        "cicids": "fwd_psh_flags",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "packets",
+        "unit_cicids": "flags",
+        "conversion": "identity",
+        "reason": "Retransmitted/dropped packets are not PSH flags.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "forward_ttl",
+        "unsw": "sttl",
+        "cicids": "min_seg_size_forward",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "hops",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "TTL and TCP segment header size measure different quantities.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      },
+      {
+        "canonical_name": "http_body",
+        "unsw": "res_bdy_len",
+        "cicids": "total_length_of_fwd_packets",
+        "semantic_valid": false,
+        "direction": "forward",
+        "unit_unsw": "bytes",
+        "unit_cicids": "bytes",
+        "conversion": "identity",
+        "reason": "HTTP response body differs in direction and aggregation from forward flow packet lengths.",
+        "log1p": true,
+        "discrete": false,
+        "aggregation": "bidirectional flow record",
+        "direction_assumption": "UNSW source aligns with CICFlowMeter first-packet forward; extractor timeout boundaries may differ"
+      }
+    ]
+  },
+  "inputs": {
+    "unsw": {
+      "path": "/Users/thonph/Desktop/KLTN/data/splits/unsw_train",
+      "rows": 1442111,
+      "columns": [
+        "dpkts",
+        "dur",
+        "spkts",
+        "label"
+      ],
+      "projected_data_sha256": "b1c30dbcfc2f25d0655beb124708852fb07ed25e7084f9f60d9ff73a348aeb52",
+      "files": [
+        "part-00000-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00001-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00002-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00003-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00004-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00005-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00006-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00007-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00008-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00009-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00010-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00011-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00012-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00013-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00014-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet",
+        "part-00015-9a7b063c-6477-4d2a-a151-e1e1292010fd-c000.snappy.parquet"
+      ]
+    },
+    "cicids": {
+      "path": "/Users/thonph/Desktop/KLTN/data/splits/cicids_train",
+      "rows": 1764877,
+      "columns": [
+        "flow_duration",
+        "total_fwd_packets"
+      ],
+      "projected_data_sha256": "ff02994c705f3d9c61b59ce8eca7208adc384cf60f814eb406082fb844b4c9b1",
+      "files": [
+        "part-00000-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00001-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00002-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00003-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00004-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00005-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00006-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet",
+        "part-00007-5f2fe6e9-2cd7-472a-b181-8552bc612702-c000.snappy.parquet"
+      ]
+    }
+  },
+  "subsets": {
+    "10": {
+      "requested_k": 10,
+      "actual_k": 2,
+      "status": "insufficient_eligible_pairs"
+    },
+    "12": {
+      "requested_k": 12,
+      "actual_k": 2,
+      "status": "insufficient_eligible_pairs"
+    },
+    "14": {
+      "requested_k": 14,
+      "actual_k": 2,
+      "status": "insufficient_eligible_pairs"
+    },
+    "16": {
+      "requested_k": 16,
+      "actual_k": 2,
+      "status": "insufficient_eligible_pairs"
+    }
+  },
+  "versions": {
+    "numpy": "2.5.3",
+    "pandas": "3.0.5",
+    "scipy": "1.18.1",
+    "scikit-learn": "1.9.0",
+    "pyarrow": "25.0.1"
+  },
+  "historical_limitation": "CICIDS was correlation-pruned before splitting; no claim of end-to-end train-only preprocessing."
+}

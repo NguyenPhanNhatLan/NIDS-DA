@@ -27,7 +27,8 @@ htmlcov/
 
 # Dữ liệu và kết quả sinh ra
 /data/
-/results/
+/results/*
+!/results/feature_mapping/
 /reports/
 /artifacts/
 
