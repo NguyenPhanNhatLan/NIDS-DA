@@ -65,6 +65,9 @@ def evaluate(model, loader, domain_name):
     matrix = confusion_matrix(labels, predictions, labels=[0, 1])
     print("Confusion matrix [[TN, FP], [FN, TP]]:")
     print(matrix)
+    print(
+        f"F1 macro: {f1_score(labels, predictions, labels=[0, 1], average='macro', zero_division=0):.4f}"
+    )
 
     if len(np.unique(labels)) == 2:
         auc = roc_auc_score(labels, scores)
@@ -199,7 +202,7 @@ def compute_metrics(
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
-        "f1_attack": float(f1), 
+        "f1_attack": float(f1),
         "macro_f1": float(macro_f1),
         "fpr": float(fpr),
         "prevalence": prevalence,
@@ -246,7 +249,6 @@ def evaluate_dataset(dataset, seed=42):
         feature_dir / f"{dataset}_test", input_dim, training=False
     )
 
-    # Chọn threshold từ validation, sau đó cố định khi tính metrics test.
     val_labels, val_scores = collect_scores(model, validation_loader)
     if len(np.unique(val_labels)) != 2:
         raise ValueError(f"{dataset} validation phải có đủ hai lớp.")
@@ -277,7 +279,8 @@ def evaluate_dataset(dataset, seed=42):
     print(f"{row['experiment']} | seed={seed} | threshold={threshold:.4f}")
     print(
         f"AP={row['pr_auc']:.4f} | ROC-AUC={row['roc_auc']:.4f} | "
-        f"F1={row['f1']:.4f} | Recall={row['recall']:.4f} | FPR={row['fpr']:.4f}"
+        f"F1={row['f1']:.4f} | F1 macro={row['macro_f1']:.4f} | "
+        f"Recall={row['recall']:.4f} | FPR={row['fpr']:.4f}"
     )
     print(f"Saved: {output_path}")
     return row
