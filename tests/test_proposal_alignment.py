@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 
 from models.baseline import BaselineMLP
 from training import proposal_mmd
-from training.proposal_class_aware import class_aware_mmd_loss
+from training.proposal_class_aware import class_aware_mmd_loss, pseudo_label_counts
 from training.proposal_mkmmd import multi_kernel_mmd_loss
 from training.proposal_data import ParquetBatchStream
 
@@ -61,6 +61,10 @@ class ProposalAlignmentTests(unittest.TestCase):
                                        torch.zeros_like(target_logits), 0.9)
         self.assertEqual(float(zero.detach()), 0.0)
 
+    def test_pseudo_label_acceptance_counts_only_confident_predictions(self):
+        logits = torch.tensor([[5.0, 0.0], [0.0, 5.0], [0.0, 0.0]])
+        self.assertEqual(pseudo_label_counts(logits, 0.8), (2, 3, [1, 1]))
+
     def test_train_dispatches_mk_and_class_aware(self):
         x = torch.randn(8, 10)
         y = torch.tensor([0, 1] * 4)
@@ -82,6 +86,10 @@ class ProposalAlignmentTests(unittest.TestCase):
             self.assertEqual(best_epoch, 1)
             self.assertAlmostEqual(history[1]["loss"], history[1]["source_ce"]
                                    + 0.01 * history[1]["mmd2"], places=6)
+            if method == "class_aware_mmd":
+                acceptance = history[1]["pseudo_label_acceptance"]
+                self.assertEqual(acceptance["seen"], len(x))
+                self.assertEqual(sum(acceptance["accepted_per_class"]), acceptance["accepted"])
 
 
 if __name__ == "__main__":

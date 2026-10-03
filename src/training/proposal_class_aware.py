@@ -10,6 +10,16 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / "configs/proposal_class_aware_v1.json"
 
 
+def pseudo_label_counts(target_logits, confidence):
+    """Count accepted target predictions without reading target labels."""
+    with torch.no_grad():
+        probabilities = torch.softmax(target_logits.detach(), dim=1)
+        confidence_values, pseudo_labels = probabilities.max(dim=1)
+        accepted = confidence_values >= confidence
+        counts = [int((accepted & (pseudo_labels == label)).sum().item()) for label in (0, 1)]
+    return sum(counts), len(target_logits), counts
+
+
 def class_aware_mmd_loss(source_z, source_y, target_z, target_logits, confidence=0.8):
     if not 0 <= confidence <= 1:
         raise ValueError("Pseudo-label confidence must lie in [0, 1]")

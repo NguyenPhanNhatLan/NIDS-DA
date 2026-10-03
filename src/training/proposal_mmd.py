@@ -20,7 +20,7 @@ from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.adaptation import mmd_loss
 from training.baseline import set_seed
-from training.proposal_class_aware import class_aware_mmd_loss
+from training.proposal_class_aware import class_aware_mmd_loss, pseudo_label_counts
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mkmmd import multi_kernel_mmd_loss
 
@@ -217,6 +217,8 @@ def train_mmd(
         "source_val_ap": best_ap,
         "stage": "source_pretrained",
     }]
+    if method == "class_aware_mmd":
+        history[0]["pseudo_label_acceptance"] = None
     print(f"Epoch 000 | Source pretrained | Val AP={best_ap:.6f}")
 
     for epoch in range(
@@ -233,6 +235,9 @@ def train_mmd(
         total_ce = 0.0
         total_mmd = 0.0
         total_bandwidth = 0.0
+        accepted_total = 0
+        target_total = 0
+        accepted_per_class = [0, 0]
 
         steps = 0
 
@@ -291,6 +296,15 @@ def train_mmd(
 
             source_logits = combined_logits[:batch_size]
             target_logits = combined_logits[batch_size:]
+
+            if method == "class_aware_mmd":
+                accepted, seen, per_class = pseudo_label_counts(
+                    target_logits, config["mmd"]["target_pseudo_label_confidence"]
+                )
+                accepted_total += accepted
+                target_total += seen
+                accepted_per_class[0] += per_class[0]
+                accepted_per_class[1] += per_class[1]
 
             # ------------------------------------------------
             # Source supervised loss
@@ -362,6 +376,14 @@ def train_mmd(
             "bandwidth": total_bandwidth / steps,
             "source_val_ap": val_ap,
         }
+        if method == "class_aware_mmd":
+            row["pseudo_label_acceptance"] = {
+                "confidence_threshold": config["mmd"]["target_pseudo_label_confidence"],
+                "accepted": accepted_total,
+                "seen": target_total,
+                "rate": accepted_total / target_total,
+                "accepted_per_class": accepted_per_class,
+            }
 
         history.append(row)
 
@@ -377,6 +399,9 @@ def train_mmd(
             f"Val AP="
             f"{val_ap:.6f}"
         )
+        if method == "class_aware_mmd":
+            print(f"  Pseudo-label acceptance: {accepted_total}/{target_total} "
+                  f"({accepted_total / target_total:.2%}); class 0/1={accepted_per_class}")
 
         improvement = val_ap - best_ap
 
