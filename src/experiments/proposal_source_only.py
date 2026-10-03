@@ -7,11 +7,14 @@ from pathlib import Path
 import torch
 
 from evaluation.baseline import collect_scores, compute_metrics, select_f1_threshold
+from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.baseline import make_loader, set_seed, train_baseline
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_DIM = 10
+CHECKPOINT_ROOT = ROOT / "models/proposal_v1/source_only_pretrained"
+RESULT_ROOT = ROOT / "results/proposal_v1/source_only_pretrained"
 
 
 def domains(direction):
@@ -31,6 +34,11 @@ def count_classes(loader):
 
 def run(direction, seed=42):
     source, target = domains(direction)
+    checkpoint_path = CHECKPOINT_ROOT / direction / f"seed{seed}.pt"
+    result_path = RESULT_ROOT / direction / f"seed{seed}.json"
+    for path in (checkpoint_path, result_path):
+        if path.exists():
+            raise FileExistsError(f"Output already exists: {path}")
     base = ROOT / "data/features/proposal_v1" / direction
     set_seed(seed)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -58,13 +66,27 @@ def run(direction, seed=42):
     source_labels, source_scores = collect_scores(model, source_val)
     threshold = select_f1_threshold(source_labels, source_scores)
     source_metrics = compute_metrics(source_labels, source_scores, threshold)
-    target_labels, target_scores = collect_scores(model, target_test)
-    target_metrics = compute_metrics(target_labels, target_scores, threshold)
-
-    return {
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "protocol": "proposal_source_only_pretrained_v1",
         "direction": direction,
         "seed": seed,
         "input_dim": INPUT_DIM,
+        "features": list(COMMON_FEATURES),
+        "best_epoch": best_epoch,
+        "best_source_val_ap": float(best_ap),
+        "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+    }, checkpoint_path)
+    target_labels, target_scores = collect_scores(model, target_test)
+    target_metrics = compute_metrics(target_labels, target_scores, threshold)
+
+    result = {
+        "direction": direction,
+        "seed": seed,
+        "input_dim": INPUT_DIM,
+        "feature_count": INPUT_DIM,
+        "features": list(COMMON_FEATURES),
         "source_train_counts": counts,
         "best_epoch": best_epoch,
         "best_source_val_ap": float(best_ap),
@@ -72,6 +94,13 @@ def run(direction, seed=42):
         "source_val": source_metrics,
         "target_test": target_metrics,
     }
+    result["checkpoint"] = str(checkpoint_path)
+    with result_path.open("x", encoding="utf-8") as stream:
+        json.dump(result, stream, indent=2, allow_nan=False)
+        stream.write("\n")
+    print(f"Saved source checkpoint: {checkpoint_path}")
+    print(f"Saved source result: {result_path}")
+    return result
 
 
 def main():
