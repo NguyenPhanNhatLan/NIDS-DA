@@ -20,5 +20,8 @@ dependencies = [
     "umap-learn",
 ]
 
+[project.optional-dependencies]
+classical = ["xgboost"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
