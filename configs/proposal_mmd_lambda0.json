@@ -1,16 +1,14 @@
 {
   "protocol_id": "proposal_mmd_v1",
   "feature_count": 10,
-
+  "development_split": "target_val",
   "lambda_mmd": 0.0,
-
   "mmd": {
     "layer": "latent_168",
     "kernel": "single_rbf",
     "bandwidth": "median_heuristic_per_batch",
     "estimator": "biased"
   },
-
   "training": {
     "batch_size": 256,
     "epochs": 50,
@@ -19,13 +17,13 @@
     "patience": 7,
     "min_delta": 0.0001
   },
-
   "selection": {
     "checkpoint": "source_validation_ap",
     "threshold": "source_validation_f1"
   },
-
   "target_labels_used_training": false,
   "target_labels_used_checkpoint_selection": false,
-  "target_labels_used_threshold_selection": false
+  "target_labels_used_threshold_selection": false,
+  "alpha_ce": 1.0,
+  "method": "marginal_mmd"
 }

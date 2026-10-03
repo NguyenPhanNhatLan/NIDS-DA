@@ -21,8 +21,8 @@ class ProposalSourceOnlyTests(unittest.TestCase):
     def test_source_validation_selects_threshold(self):
         loaders = []
 
-        def fake_loader(path, input_dim, batch_size, training):
-            token = (path.name, input_dim, batch_size, training)
+        def fake_loader(path, batch_size, shuffle, seed, include_labels, drop_last=False):
+            token = (path.name, batch_size, shuffle, seed, include_labels, drop_last)
             loaders.append(token)
             return token
 
@@ -44,7 +44,8 @@ class ProposalSourceOnlyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir, \
              patch.object(experiment, "CHECKPOINT_ROOT", Path(temp_dir) / "models"), \
              patch.object(experiment, "RESULT_ROOT", Path(temp_dir) / "results"), \
-             patch.object(experiment, "make_loader", side_effect=fake_loader), \
+             patch.object(experiment, "ParquetBatchStream", side_effect=fake_loader), \
+             patch.object(experiment, "split_sha256", return_value="fixture-hash"), \
              patch.object(experiment, "count_classes", return_value=[2, 2]) as counts, \
              patch.object(experiment, "BaselineMLP", FakeModel), \
              patch.object(experiment, "train_baseline", side_effect=lambda model, *a, **k: (model, 3, 0.8)), \
@@ -55,10 +56,10 @@ class ProposalSourceOnlyTests(unittest.TestCase):
             checkpoint = torch.load(result["checkpoint"], map_location="cpu", weights_only=True)
             self.assertEqual(checkpoint["best_epoch"], 3)
             self.assertEqual(checkpoint["direction"], "unsw_to_cicids")
-        self.assertEqual(loaders[0], ("unsw_train", 10, 4096, False))
-        self.assertEqual(loaders[1], ("unsw_train", 10, 256, True))
+        self.assertEqual(loaders[0], ("unsw_train", 4096, False, 42, True, False))
+        self.assertEqual(loaders[1], ("unsw_train", 256, True, 42, True, True))
         self.assertEqual(loaders[2][0], "unsw_val")
-        self.assertEqual(loaders[3][0], "cicids_test")
+        self.assertEqual(loaders[3][0], "cicids_val")
         counts.assert_called_once_with(loaders[0])
         select.assert_called_once()
         self.assertEqual(result["threshold_from_source_val"], 0.6)
