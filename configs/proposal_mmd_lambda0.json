@@ -24,5 +24,6 @@
   "target_labels_used_training": false,
   "target_labels_used_checkpoint_selection": false,
   "target_labels_used_threshold_selection": false,
-  "alpha_ce": 1.0
+  "alpha_ce": 1.0,
+  "method": "marginal_mmd"
 }

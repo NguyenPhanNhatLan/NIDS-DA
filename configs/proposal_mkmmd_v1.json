@@ -1,12 +1,17 @@
 {
-  "protocol_id": "proposal_mmd_v1",
+  "protocol_id": "proposal_mkmmd_v1",
   "feature_count": 10,
   "development_split": "target_val",
   "lambda_mmd": 0.01,
   "mmd": {
     "layer": "latent_168",
-    "kernel": "single_rbf",
-    "bandwidth": "median_heuristic_per_batch",
+    "kernel": "multi_rbf",
+    "bandwidth": "shared_median_heuristic_per_batch",
+    "scales": [
+      0.5,
+      1.0,
+      2.0
+    ],
     "estimator": "biased"
   },
   "training": {
@@ -25,5 +30,5 @@
   "target_labels_used_checkpoint_selection": false,
   "target_labels_used_threshold_selection": false,
   "alpha_ce": 1.0,
-  "method": "marginal_mmd"
+  "method": "mk_mmd"
 }
