@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -31,12 +33,18 @@ class ProposalSourceOnlyTests(unittest.TestCase):
             def to(self, device):
                 return self
 
+            def state_dict(self):
+                return {"weight": torch.tensor([1.0])}
+
         def fake_scores(model, loader):
             if loader[0] == "unsw_val":
                 return np.array([0, 1]), np.array([0.1, 0.9])
             return np.array([0, 1]), np.array([0.2, 0.8])
 
-        with patch.object(experiment, "make_loader", side_effect=fake_loader), \
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch.object(experiment, "CHECKPOINT_ROOT", Path(temp_dir) / "models"), \
+             patch.object(experiment, "RESULT_ROOT", Path(temp_dir) / "results"), \
+             patch.object(experiment, "make_loader", side_effect=fake_loader), \
              patch.object(experiment, "count_classes", return_value=[2, 2]) as counts, \
              patch.object(experiment, "BaselineMLP", FakeModel), \
              patch.object(experiment, "train_baseline", side_effect=lambda model, *a, **k: (model, 3, 0.8)), \
@@ -44,6 +52,9 @@ class ProposalSourceOnlyTests(unittest.TestCase):
              patch.object(experiment, "select_f1_threshold", return_value=0.6) as select, \
              patch.object(experiment, "compute_metrics", return_value={"f1": 1.0}):
             result = experiment.run("unsw_to_cicids", 42)
+            checkpoint = torch.load(result["checkpoint"], map_location="cpu", weights_only=True)
+            self.assertEqual(checkpoint["best_epoch"], 3)
+            self.assertEqual(checkpoint["direction"], "unsw_to_cicids")
         self.assertEqual(loaders[0], ("unsw_train", 10, 4096, False))
         self.assertEqual(loaders[1], ("unsw_train", 10, 256, True))
         self.assertEqual(loaders[2][0], "unsw_val")
