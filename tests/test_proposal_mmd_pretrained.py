@@ -106,6 +106,8 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
         self.assertEqual(epoch, 1)
         self.assertEqual(ap, 0.6)
         self.assertEqual([row["epoch"] for row in history], [0, 1])
+        self.assertAlmostEqual(history[1]["loss"],
+                               history[1]["source_ce"] + 0.01 * history[1]["mmd2"], places=6)
         zero_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mmd_lambda0.json")
         main_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mmd_v1.json")
         self.assertNotEqual(zero_paths, main_paths)

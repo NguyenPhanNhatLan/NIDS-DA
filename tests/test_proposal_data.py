@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from features import proposal_preprocessing as prep
-from training.proposal_data import iter_parquet_batches
+from training.proposal_data import iter_parquet_batches, split_sha256
 
 
 def write_vectors(directory, values, labels=None):
@@ -31,6 +31,12 @@ class ProposalDataTests(unittest.TestCase):
             labels = np.arange(27) % 2
             write_vectors(source, rows, labels)
             write_vectors(target, rows)
+            initial_hash = split_sha256(source)
+            original = (source / "data.parquet").read_bytes()
+            with (source / "data.parquet").open("ab") as stream:
+                stream.write(b"changed")
+            self.assertNotEqual(initial_hash, split_sha256(source))
+            (source / "data.parquet").write_bytes(original)
             first = list(iter_parquet_batches(source, 8, True, 42, True))
             second = list(iter_parquet_batches(source, 8, True, 42, True))
             self.assertTrue(all(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
