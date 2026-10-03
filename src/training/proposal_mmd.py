@@ -28,20 +28,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_CONFIG = ROOT / "configs" / "proposal_mmd_v1.json"
 
-COMMON_CONFIG = ROOT / "configs" / "common_features_v1.json"
+COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
-FEATURE_ROOT = ROOT / "data" / "features" / "proposal_v1"
+FEATURE_ROOT = ROOT / "data" / "features" / "proposal_v2"
 
-MODEL_ROOT = ROOT / "models" / "proposal_v1" / "mmd"
+MODEL_ROOT = ROOT / "models" / "proposal_v2" / "mmd"
 
-RESULT_ROOT = ROOT / "results" / "proposal_v1" / "mmd"
+RESULT_ROOT = ROOT / "results" / "proposal_v2" / "mmd"
 
-SOURCE_ONLY_ROOT = ROOT / "results" / "proposal_v1" / "source_only_target_val"
-SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v1" / "source_only_target_val"
+SOURCE_ONLY_ROOT = ROOT / "results" / "proposal_v2" / "source_only_target_val"
+SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v2" / "source_only_target_val"
 
 
 def output_paths(direction, seed, config_path):
-    """Keep pretrained adaptations separate from earlier scratch MMD runs."""
     config_path = Path(config_path)
     tag = f"target_val_epoch0_{config_path.stem}"
     model_root, result_root = MODEL_ROOT / tag, RESULT_ROOT / tag
@@ -49,9 +48,6 @@ def output_paths(direction, seed, config_path):
         model_root / direction / f"seed{seed}.pt",
         result_root / direction / f"seed{seed}.json",
     )
-
-
-
 
 
 def sha256(path):
@@ -123,7 +119,6 @@ def get_device():
 
 
 def freeze_bn_stats(model):
-    """Keep source-pretrained running mean/variance fixed during adaptation."""
     for module in model.modules():
         if isinstance(module, nn.modules.batchnorm._BatchNorm):
             module.eval()
@@ -153,12 +148,6 @@ def count_classes(
 
     return counts.tolist()
 
-
-# ============================================================
-# MMD training
-# ============================================================
-
-
 def train_mmd(
     model,
     counts,
@@ -177,7 +166,6 @@ def train_mmd(
     alpha_ce = float(config["alpha_ce"])
     method = config.get("method", "marginal_mmd")
 
-    # Same class weighting as source-only
     counts = torch.as_tensor(
         counts,
         dtype=torch.float32,
@@ -187,15 +175,12 @@ def train_mmd(
 
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    # Same optimizer as source-only
     optimizer = optim.Adam(
         model.parameters(),
         lr=settings["learning_rate"],
         weight_decay=settings["weight_decay"],
     )
 
-    # The loaded source-only model is a valid candidate. Adaptation must
-    # improve source validation AP to replace it.
     model.eval()
     best_ap = evaluate_ap(model, source_val_loader, device)
     if expected_source_ap is not None and abs(best_ap - expected_source_ap) > 1e-3:
@@ -270,12 +255,6 @@ def train_mmd(
 
             batch_size = len(source_x)
 
-            # ------------------------------------------------
-            # ONE shared forward pass
-            #
-            # This avoids source-first / target-second
-            # BatchNorm order effects.
-            # ------------------------------------------------
 
             combined_x = torch.cat(
                 [
@@ -405,8 +384,6 @@ def train_mmd(
 
         improvement = val_ap - best_ap
 
-        # Same checkpoint rule
-        # as source-only baseline
         if val_ap > best_ap:
 
             best_ap = val_ap
@@ -443,11 +420,6 @@ def train_mmd(
     )
 
 
-# ============================================================
-# Evaluation
-# ============================================================
-
-
 def evaluate_split(
     model,
     path,
@@ -467,12 +439,6 @@ def evaluate_split(
         scores,
         threshold,
     )
-
-
-# ============================================================
-# Full run
-# ============================================================
-
 
 def run(
     direction,
@@ -502,11 +468,7 @@ def run(
     target_train_path = base / f"{target}_train"
 
     target_development_path = base / f"{target}_val"
-
-    # --------------------------------------------------------
-    # Frozen source-only reference
-    # --------------------------------------------------------
-
+    
     source_only_path = SOURCE_ONLY_ROOT / direction / f"seed{seed}.json"
     source_checkpoint_path = SOURCE_CHECKPOINT_ROOT / direction / f"seed{seed}.pt"
 
@@ -536,7 +498,7 @@ def run(
         or source_checkpoint["features"] != list(COMMON_FEATURES)
         or source_checkpoint["best_epoch"] != source_only["best_epoch"]
         or source_checkpoint["common_feature_config_sha256"] != sha256(COMMON_CONFIG)
-        or source_checkpoint["preprocessor_sha256"] != sha256(ROOT / "models/proposal_v1" / direction / "preprocessor.joblib")
+        or source_checkpoint["preprocessor_sha256"] != sha256(ROOT / "models/proposal_v2" / direction / "preprocessor.joblib")
         or source_only["common_feature_config_sha256"] != source_checkpoint["common_feature_config_sha256"]
         or source_only["preprocessor_sha256"] != source_checkpoint["preprocessor_sha256"]
     ):
@@ -551,9 +513,7 @@ def run(
             or source_only.get("prepared_split_sha256") != current_splits):
         raise ValueError("Prepared feature splits changed since source-only training")
 
-    # --------------------------------------------------------
-    # Reproducibility
-    # --------------------------------------------------------
+
 
     set_seed(seed)
 
@@ -781,10 +741,6 @@ def run(
 
         stream.write("\n")
 
-    # --------------------------------------------------------
-    # Summary
-    # --------------------------------------------------------
-
     print("\nMetric | Source-only " "| MMD | Delta")
 
     for metric in metric_names:
@@ -801,11 +757,6 @@ def run(
     print(f"Saved result: " f"{output_path}")
 
     return result
-
-
-# ============================================================
-# CLI
-# ============================================================
 
 
 def main():

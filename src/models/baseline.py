@@ -21,7 +21,6 @@ class BaselineMLP(nn.Module):
         )
         
     def encode_hidden(self, x):
-        """Trả về biểu diễn 256D ngay trước tầng fc2 dùng chung."""
         x = self.fc1(x)
         x = self.bn1(x)
         x = F.relu(x)

@@ -1,0 +1,42 @@
+[
+  {
+    "canonical_name": "flow_duration",
+    "unsw": "dur",
+    "cicids": "flow_duration",
+    "direction": "bidirectional",
+    "transform": "cicids_us_to_seconds",
+    "reason": "Elapsed duration of the bidirectional flow."
+  },
+  {
+    "canonical_name": "fwd_packets",
+    "unsw": "spkts",
+    "cicids": "total_fwd_packets",
+    "direction": "forward",
+    "transform": "none",
+    "reason": "Number of packets in the source-to-destination/forward direction."
+  },
+  {
+    "canonical_name": "bwd_packets",
+    "unsw": "dpkts",
+    "cicids": "total_backward_packets",
+    "direction": "backward",
+    "transform": "none",
+    "reason": "Number of packets in the destination-to-source/backward direction."
+  },
+  {
+    "canonical_name": "fwd_bytes",
+    "unsw": "sbytes",
+    "cicids": "total_length_of_fwd_packets",
+    "direction": "forward",
+    "transform": "none",
+    "reason": "Total bytes in the source-to-destination/forward direction."
+  },
+  {
+    "canonical_name": "bwd_bytes",
+    "unsw": "dbytes",
+    "cicids": "total_length_of_bwd_packets",
+    "direction": "backward",
+    "transform": "none",
+    "reason": "Total bytes in the destination-to-source/backward direction."
+  }
+]

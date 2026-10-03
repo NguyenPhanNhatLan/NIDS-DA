@@ -1,6 +1,6 @@
 {
   "protocol_id": "proposal_mkmmd_v1",
-  "feature_count": 10,
+  "feature_count": 5,
   "development_split": "target_val",
   "lambda_mmd": 0.01,
   "mmd": {

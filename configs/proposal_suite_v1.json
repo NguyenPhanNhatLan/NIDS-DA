@@ -1,6 +1,6 @@
 {
   "protocol": "proposal_v1_target_val",
-  "feature_count": 10,
+  "feature_count": 5,
   "methods": ["source_only", "marginal_mmd", "mk_mmd", "class_aware_mmd"],
   "directions": ["unsw_to_cicids", "cicids_to_unsw"],
   "seeds": [42, 43, 44, 45, 46],

@@ -14,9 +14,9 @@ from training.baseline import set_seed, train_baseline
 from training.proposal_data import ParquetBatchStream, split_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_DIM = 10
-CHECKPOINT_ROOT = ROOT / "models/proposal_v1/source_only_target_val"
-RESULT_ROOT = ROOT / "results/proposal_v1/source_only_target_val"
+INPUT_DIM = len(COMMON_FEATURES)
+CHECKPOINT_ROOT = ROOT / "models/proposal_v2/source_only_target_val"
+RESULT_ROOT = ROOT / "results/proposal_v2/source_only_target_val"
 
 
 def sha256(path):
@@ -49,22 +49,26 @@ def run(direction, seed=42):
     for path in (checkpoint_path, result_path):
         if path.exists():
             raise FileExistsError(f"Output already exists: {path}")
-    base = ROOT / "data/features/proposal_v1" / direction
+    base = ROOT / "data/features/proposal_v2" / direction
     set_seed(seed)
     device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available()
-        else "cpu"
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps" if torch.backends.mps.is_available() else "cpu"
     )
 
     counts = count_classes(
         ParquetBatchStream(base / f"{source}_train", 4096, False, seed, True)
     )
-    source_train = ParquetBatchStream(base / f"{source}_train", 256, True, seed, True, drop_last=True)
+    source_train = ParquetBatchStream(
+        base / f"{source}_train", 256, True, seed, True, drop_last=True
+    )
     source_val = ParquetBatchStream(base / f"{source}_val", 256, False, seed, True)
-    target_development = ParquetBatchStream(base / f"{target}_val", 256, False, seed, True)
-    preprocessor_path = ROOT / "models/proposal_v1" / direction / "preprocessor.joblib"
-    common_config_path = ROOT / "configs/common_features_v1.json"
+    target_development = ParquetBatchStream(
+        base / f"{target}_val", 256, False, seed, True
+    )
+    preprocessor_path = ROOT / "models/proposal_v2" / direction / "preprocessor.joblib"
+    common_config_path = ROOT / "configs/common_features_v2.json"
     if not preprocessor_path.is_file():
         raise FileNotFoundError(f"Missing fitted preprocessor: {preprocessor_path}")
     provenance = {
@@ -88,17 +92,22 @@ def run(direction, seed=42):
     source_metrics = compute_metrics(source_labels, source_scores, threshold)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "protocol": "proposal_source_only_target_val_v2",
-        "direction": direction,
-        "seed": seed,
-        "input_dim": INPUT_DIM,
-        "features": list(COMMON_FEATURES),
-        "best_epoch": best_epoch,
-        "best_source_val_ap": float(best_ap),
-        **provenance,
-        "model_state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
-    }, checkpoint_path)
+    torch.save(
+        {
+            "protocol": "proposal_source_only_target_val_v2",
+            "direction": direction,
+            "seed": seed,
+            "input_dim": INPUT_DIM,
+            "features": list(COMMON_FEATURES),
+            "best_epoch": best_epoch,
+            "best_source_val_ap": float(best_ap),
+            **provenance,
+            "model_state_dict": {
+                key: value.detach().cpu() for key, value in model.state_dict().items()
+            },
+        },
+        checkpoint_path,
+    )
     target_labels, target_scores = collect_scores(model, target_development)
     target_metrics = compute_metrics(target_labels, target_scores, threshold)
 

@@ -101,9 +101,6 @@ def run(direction, seed=42):
 
     input_dim = len(COMMON_FEATURES)
 
-    if input_dim != 10:
-        raise ValueError(f"Expected 10 common features, " f"got {input_dim}")
-
     base = FEATURE_ROOT / direction
 
     source_train_path = base / f"{source}_train"
@@ -126,20 +123,12 @@ def run(direction, seed=42):
     print(f"Device: {device}")
     print(f"Input dim: {input_dim}")
 
-    # ----------------------------------
-    # Source training class counts
-    # ----------------------------------
-
     counts = count_classes(
         source_train_path,
         input_dim,
     )
 
     print(f"Source class counts: {counts}")
-
-    # ----------------------------------
-    # Loaders
-    # ----------------------------------
 
     train_loader = make_loader(
         source_train_path,

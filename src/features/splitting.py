@@ -10,20 +10,45 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 SEED = 42
 
 
-def split_data(df: DataFrame, seed: int = SEED):
-    """Chia cố định 70/15/15 theo features; bản ghi trùng không qua hai tập."""
-    feature_columns = [name for name in df.columns if name != "label"]
-    if not feature_columns:
-        raise ValueError("Không có features để tạo split cố định.")
+SPLIT_KEY_COLUMNS = {
+    "unsw": [
+        "dur",
+        "spkts",
+        "dpkts",
+        "sbytes",
+        "dbytes",
+    ],
+    "cicids": [
+        "flow_duration",
+        "total_fwd_packets",
+        "total_backward_packets",
+        "total_length_of_fwd_packets",
+        "total_length_of_bwd_packets",
+    ],
+}
 
-    # Hash chỉ dùng đầu vào, không dùng nhãn. Cùng features luôn vào cùng tập.
+
+def split_data(df: DataFrame, dataset: str, seed: int = SEED):
+    key_columns = SPLIT_KEY_COLUMNS[dataset]
+
+    missing = [c for c in key_columns if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing split-key columns for {dataset}: {missing}"
+        )
+
     bucket = F.pmod(
-        F.xxhash64(*[F.col(name) for name in feature_columns], F.lit(seed)),
+        F.xxhash64(
+            *[F.col(c) for c in key_columns],
+            F.lit(seed),
+        ),
         F.lit(100),
     )
+
     train_df = df.filter(bucket < 70)
     val_df = df.filter((bucket >= 70) & (bucket < 85))
     test_df = df.filter(bucket >= 85)
+
     return train_df, val_df, test_df
 
 
@@ -33,7 +58,7 @@ def main():
     args = parser.parse_args()
 
     source_path = PROJECT_DIR / "data" / "processed" / f"clean_{args.dataset}.parquet"
-    split_dir = PROJECT_DIR / "data" / "splits"
+    split_dir = PROJECT_DIR / "data" / "splits_v2"
     paths = [split_dir / f"{args.dataset}_{name}" for name in ("train", "val", "test")]
     existing = [path for path in paths if path.exists()]
     if existing:
@@ -54,7 +79,7 @@ def main():
             raise ValueError("label phải là 0/1, không được null.")
         data = data.withColumn("label", F.col("label").cast("int"))
 
-        for name, part, path in zip(("train", "val", "test"), split_data(data), paths):
+        for name, part, path in zip(("train", "val", "test"), split_data(data, args.dataset), paths):
             part.write.mode("errorifexists").parquet(str(path))
             print(f"{args.dataset} {name}: {path}")
     finally:

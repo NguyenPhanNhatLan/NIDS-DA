@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = ROOT / "configs/common_features_v1.json"
+DEFAULT_CONFIG = ROOT / "configs/common_features_v2.json"
 COMMON_FEATURES = tuple(
     item["canonical_name"] for item in json.loads(DEFAULT_CONFIG.read_text())
 )
@@ -248,7 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split-root", type=Path, default=ROOT / "data/splits")
     parser.add_argument(
-        "--output-root", type=Path, default=ROOT / "data/features/common_raw"
+        "--output-root", type=Path, default=ROOT / "data/features/common_raw2"
     )
     args = parser.parse_args()
     names = generate_raw_common_feature_datasets(args.split_root, args.output_root)
