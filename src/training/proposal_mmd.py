@@ -6,7 +6,6 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch import nn
 import torch.optim as optim
@@ -47,7 +46,7 @@ SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v1" / "source_only_pretrain
 def output_paths(direction, seed, config_path):
     """Keep pretrained adaptations separate from earlier scratch MMD runs."""
     config_path = Path(config_path)
-    tag = f"pretrained_{config_path.stem}"
+    tag = f"pretrained_epoch0_{config_path.stem}"
     model_root, result_root = MODEL_ROOT / tag, RESULT_ROOT / tag
     return (
         model_root / direction / f"seed{seed}.pt",
@@ -183,13 +182,25 @@ def train_mmd(
         weight_decay=settings["weight_decay"],
     )
 
-    best_ap = -np.inf
-    best_epoch = -1
-    best_state = None
+    # The loaded source-only model is a valid candidate. Adaptation must
+    # improve source validation AP to replace it.
+    model.eval()
+    best_ap = evaluate_ap(model, source_val_loader, device)
+    best_epoch = 0
+    best_state = deepcopy(model.state_dict())
 
     epochs_without_improvement = 0
 
-    history = []
+    history = [{
+        "epoch": 0,
+        "loss": None,
+        "source_ce": None,
+        "mmd2": None,
+        "bandwidth": None,
+        "source_val_ap": best_ap,
+        "stage": "source_pretrained",
+    }]
+    print(f"Epoch 000 | Source pretrained | Val AP={best_ap:.6f}")
 
     for epoch in range(
         1,
@@ -638,6 +649,7 @@ def run(
             "features": list(COMMON_FEATURES),
             "lambda_mmd": config["lambda_mmd"],
             "best_epoch": best_epoch,
+            "selected_stage": "source_pretrained" if best_epoch == 0 else "adaptation",
             "best_source_val_ap": best_val_ap,
             "target_labels_used_training": False,
             "source_checkpoint": str(source_checkpoint_path),
@@ -678,9 +690,10 @@ def run(
         "target_labels_used_training": False,
         "target_labels_used_checkpoint_selection": False,
         "target_labels_used_threshold_selection": False,
-        "checkpoint_selection": "source validation AP",
+        "checkpoint_selection": "source validation AP including source-pretrained epoch 0",
         "threshold_selection": "source validation F1",
         "best_epoch": best_epoch,
+        "selected_stage": "source_pretrained" if best_epoch == 0 else "adaptation",
         "best_source_val_ap": best_val_ap,
         "threshold": threshold,
         "within_domain": within_metrics,
