@@ -1,4 +1,5 @@
 """Small deterministic Parquet batch stream for proposal_v1 training."""
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,20 @@ import torch
 from features.common_features import COMMON_FEATURES
 
 INPUT_DIM = len(COMMON_FEATURES)
+
+
+def split_sha256(path):
+    """Hash prepared split bytes so checkpoints reject regenerated data."""
+    files = sorted(Path(path).glob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No Parquet files in {path}")
+    digest = hashlib.sha256()
+    for file in files:
+        digest.update(file.name.encode())
+        with file.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def iter_parquet_batches(path, batch_size, shuffle, seed, include_labels, drop_last=False):

@@ -18,14 +18,9 @@ from evaluation.baseline import (
 )
 from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
-from training.adaptation import (
-    make_unlabeled_loader,
-    mmd_loss,
-)
-from training.baseline import (
-    make_loader,
-    set_seed,
-)
+from training.adaptation import mmd_loss
+from training.baseline import set_seed
+from training.proposal_data import ParquetBatchStream, split_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,14 +34,14 @@ MODEL_ROOT = ROOT / "models" / "proposal_v1" / "mmd"
 
 RESULT_ROOT = ROOT / "results" / "proposal_v1" / "mmd"
 
-SOURCE_ONLY_ROOT = ROOT / "results" / "proposal_v1" / "source_only_pretrained"
-SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v1" / "source_only_pretrained"
+SOURCE_ONLY_ROOT = ROOT / "results" / "proposal_v1" / "source_only_target_val"
+SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v1" / "source_only_target_val"
 
 
 def output_paths(direction, seed, config_path):
     """Keep pretrained adaptations separate from earlier scratch MMD runs."""
     config_path = Path(config_path)
-    tag = f"pretrained_epoch0_{config_path.stem}"
+    tag = f"target_val_epoch0_{config_path.stem}"
     model_root, result_root = MODEL_ROOT / tag, RESULT_ROOT / tag
     return (
         model_root / direction / f"seed{seed}.pt",
@@ -82,6 +77,12 @@ def load_config(path):
 
     if config["lambda_mmd"] < 0:
         raise ValueError("lambda_mmd must be >= 0")
+
+    if config.get("alpha_ce", 0) <= 0:
+        raise ValueError("alpha_ce must be positive")
+
+    if config.get("development_split") != "target_val":
+        raise ValueError("Proposal MMD protocol requires development_split=target_val")
 
     return config
 
@@ -120,12 +121,7 @@ def count_classes(
     input_dim,
 ):
 
-    loader = make_loader(
-        path,
-        input_dim=input_dim,
-        batch_size=4096,
-        training=False,
-    )
+    loader = ParquetBatchStream(path, 4096, False, 0, True)
 
     counts = torch.zeros(
         2,
@@ -157,6 +153,7 @@ def train_mmd(
     target_loader,
     source_val_loader,
     config,
+    expected_source_ap=None,
 ):
 
     device = next(model.parameters()).device
@@ -164,6 +161,7 @@ def train_mmd(
     settings = config["training"]
 
     lambda_mmd = float(config["lambda_mmd"])
+    alpha_ce = float(config["alpha_ce"])
 
     # Same class weighting as source-only
     counts = torch.as_tensor(
@@ -186,6 +184,11 @@ def train_mmd(
     # improve source validation AP to replace it.
     model.eval()
     best_ap = evaluate_ap(model, source_val_loader, device)
+    if expected_source_ap is not None and abs(best_ap - expected_source_ap) > 1e-3:
+        raise ValueError(
+            "Source checkpoint no longer matches current source validation data/preprocessing: "
+            f"checkpoint AP={expected_source_ap:.6f}, current AP={best_ap:.6f}"
+        )
     best_epoch = 0
     best_state = deepcopy(model.state_dict())
 
@@ -293,7 +296,7 @@ def train_mmd(
             else:
                 alignment_loss, bandwidth = mmd_loss(source_z, target_z)
 
-            loss = ce_loss + lambda_mmd * alignment_loss
+            loss = alpha_ce * ce_loss + lambda_mmd * alignment_loss
 
             if not torch.isfinite(loss):
                 raise ValueError("Non-finite MMD " "training loss")
@@ -403,12 +406,7 @@ def evaluate_split(
     threshold,
 ):
 
-    loader = make_loader(
-        path,
-        input_dim=input_dim,
-        batch_size=1024,
-        training=False,
-    )
+    loader = ParquetBatchStream(path, 1024, False, 0, True)
 
     labels, scores = collect_scores(
         model,
@@ -452,14 +450,9 @@ def run(
 
     source_val_path = base / f"{source}_val"
 
-    source_test_path = base / f"{source}_test"
-
     target_train_path = base / f"{target}_train"
 
-    # IMPORTANT:
-    # current "test" is development
-    # in your thesis protocol.
-    target_development_path = base / f"{target}_test"
+    target_development_path = base / f"{target}_val"
 
     # --------------------------------------------------------
     # Frozen source-only reference
@@ -482,6 +475,7 @@ def run(
         or source_only["seed"] != seed
         or source_only["feature_count"] != input_dim
         or source_only["features"] != list(COMMON_FEATURES)
+        or source_only["target_development_split"] != f"{target}_val"
     ):
         raise ValueError("Source-only reference " "does not match MMD run")
 
@@ -492,8 +486,21 @@ def run(
         or source_checkpoint["input_dim"] != input_dim
         or source_checkpoint["features"] != list(COMMON_FEATURES)
         or source_checkpoint["best_epoch"] != source_only["best_epoch"]
+        or source_checkpoint["common_feature_config_sha256"] != sha256(COMMON_CONFIG)
+        or source_checkpoint["preprocessor_sha256"] != sha256(ROOT / "models/proposal_v1" / direction / "preprocessor.joblib")
+        or source_only["common_feature_config_sha256"] != source_checkpoint["common_feature_config_sha256"]
+        or source_only["preprocessor_sha256"] != source_checkpoint["preprocessor_sha256"]
     ):
         raise ValueError("Source-only checkpoint does not match reference")
+    current_splits = {
+        "source_train": split_sha256(source_train_path),
+        "source_val": split_sha256(source_val_path),
+        "target_train": split_sha256(target_train_path),
+        "target_val": split_sha256(target_development_path),
+    }
+    if (source_checkpoint.get("prepared_split_sha256") != current_splits
+            or source_only.get("prepared_split_sha256") != current_splits):
+        raise ValueError("Prepared feature splits changed since source-only training")
 
     # --------------------------------------------------------
     # Reproducibility
@@ -512,6 +519,7 @@ def run(
     print(f"Features={input_dim}")
 
     print(f"lambda_mmd=" f"{config['lambda_mmd']}")
+    print(f"alpha_ce={config['alpha_ce']}")
 
     # --------------------------------------------------------
     # Source class counts
@@ -526,26 +534,17 @@ def run(
     # Training loaders
     # --------------------------------------------------------
 
-    source_loader = make_loader(
-        source_train_path,
-        input_dim=input_dim,
-        batch_size=config["training"]["batch_size"],
-        training=True,
+    source_loader = ParquetBatchStream(
+        source_train_path, config["training"]["batch_size"], True, seed, True, drop_last=True
     )
 
     # This loader reads FEATURES ONLY.
-    target_loader = make_unlabeled_loader(
-        target_train_path,
-        input_dim=input_dim,
-        batch_size=config["training"]["batch_size"],
+    target_loader = ParquetBatchStream(
+        target_train_path, config["training"]["batch_size"], True, seed + 1000,
+        False, drop_last=True,
     )
 
-    source_val_loader = make_loader(
-        source_val_path,
-        input_dim=input_dim,
-        batch_size=1024,
-        training=False,
-    )
+    source_val_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
 
     # --------------------------------------------------------
     # Same architecture as source-only
@@ -567,6 +566,7 @@ def run(
         target_loader,
         source_val_loader,
         config,
+        expected_source_ap=float(source_checkpoint["best_source_val_ap"]),
     )
 
     # --------------------------------------------------------
@@ -574,12 +574,7 @@ def run(
     # SOURCE VALIDATION ONLY
     # --------------------------------------------------------
 
-    threshold_loader = make_loader(
-        source_val_path,
-        input_dim=input_dim,
-        batch_size=1024,
-        training=False,
-    )
+    threshold_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
 
     val_labels, val_scores = collect_scores(
         model,
@@ -600,7 +595,7 @@ def run(
 
     within_metrics = evaluate_split(
         model,
-        source_test_path,
+        source_val_path,
         input_dim,
         threshold,
     )
@@ -620,7 +615,7 @@ def run(
         "fpr",
     ]
 
-    baseline_cross = source_only["target_test"]
+    baseline_cross = source_only["target_development"]
 
     delta_vs_source_only = {
         metric: cross_metrics[metric] - baseline_cross[metric]
@@ -648,12 +643,15 @@ def run(
             "input_dim": input_dim,
             "features": list(COMMON_FEATURES),
             "lambda_mmd": config["lambda_mmd"],
+            "alpha_ce": config["alpha_ce"],
             "best_epoch": best_epoch,
             "selected_stage": "source_pretrained" if best_epoch == 0 else "adaptation",
             "best_source_val_ap": best_val_ap,
             "target_labels_used_training": False,
             "source_checkpoint": str(source_checkpoint_path),
             "source_checkpoint_sha256": sha256(source_checkpoint_path),
+            "preprocessor_sha256": source_checkpoint["preprocessor_sha256"],
+            "prepared_split_sha256": current_splits,
             "bn_running_stats_frozen": True,
             "config_sha256": sha256(config_path),
             "common_feature_config_sha256": sha256(COMMON_CONFIG),
@@ -673,6 +671,8 @@ def run(
         "protocol": "proposal_mmd_v1",
         "method": "marginal_rbf_mmd",
         "phase": "development",
+        "target_development_split": f"{target}_val",
+        "within_domain_split": f"{source}_val",
         "direction": direction,
         "seed": seed,
         "source_domain": source,
@@ -684,8 +684,11 @@ def run(
         "kernel": "single RBF",
         "bandwidth": "median heuristic per batch",
         "lambda_mmd": config["lambda_mmd"],
+        "alpha_ce": config["alpha_ce"],
         "source_checkpoint": str(source_checkpoint_path),
         "source_checkpoint_sha256": sha256(source_checkpoint_path),
+        "preprocessor_sha256": source_checkpoint["preprocessor_sha256"],
+        "prepared_split_sha256": current_splits,
         "bn_running_stats_frozen": True,
         "target_labels_used_training": False,
         "target_labels_used_checkpoint_selection": False,
