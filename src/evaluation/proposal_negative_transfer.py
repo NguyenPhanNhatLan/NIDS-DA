@@ -16,15 +16,15 @@ from evaluation.baseline import collect_scores, compute_metrics, select_f1_thres
 from evaluation.proposal_domain_shift import compute_domain_auc
 from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
-from training.adaptation import make_unlabeled_loader, mmd_loss
-from training.baseline import make_loader
-from training.proposal_mmd import output_paths
+from training.adaptation import estimate_bandwidth_squared, mmd_loss, rbf_kernel
+from training.proposal_data import ParquetBatchStream, split_sha256
+from training.proposal_mmd import freeze_bn_stats, output_paths
 
 ROOT = Path(__file__).resolve().parents[2]
 FEATURE_ROOT = ROOT / "data/features/proposal_v1"
-SOURCE_ROOT = ROOT / "models/proposal_v1/source_only_pretrained"
-SOURCE_RESULT_ROOT = ROOT / "results/proposal_v1/source_only_pretrained"
-OUTPUT_ROOT = ROOT / "results/proposal_v1/diagnostics"
+SOURCE_ROOT = ROOT / "models/proposal_v1/source_only_target_val"
+SOURCE_RESULT_ROOT = ROOT / "results/proposal_v1/source_only_target_val"
+OUTPUT_ROOT = ROOT / "results/proposal_v1/diagnostics_target_val"
 EPS = 1e-12
 RULES = {
     "minimum_ap_drop": 0.01,
@@ -32,8 +32,11 @@ RULES = {
     "separation_ratio_retention": 0.80,
     "gradient_negative_fraction": 0.60,
     "weak_alignment_auc": 0.80,
-    "strong_alignment_auc": 0.60,
+    "possible_over_alignment_auc": 0.65,
     "prior_gap": 0.10,
+    "source_specialization_ap_gain": 0.05,
+    "bn_shift_ratio": 2.0,
+    "bn_shift_absolute_gap": 0.5,
     "threshold_f1_gap": 0.10,
     "threshold_min_roc_auc": 0.70,
 }
@@ -71,6 +74,24 @@ def load_models(direction, seed, config_path):
             raise ValueError("Experiment direction, seed, or feature schema mismatch")
     if adapted_cp["source_checkpoint_sha256"] != sha256(source_path):
         raise ValueError("Adapted checkpoint does not derive from current source checkpoint")
+    common_hash = sha256(ROOT / "configs/common_features_v1.json")
+    preprocessor_hash = sha256(ROOT / "models/proposal_v1" / direction / "preprocessor.joblib")
+    for artifact in (source_cp, adapted_cp, source_result, adapted_result):
+        if artifact["common_feature_config_sha256"] != common_hash or artifact["preprocessor_sha256"] != preprocessor_hash:
+            raise ValueError("Experiment artifact preprocessing provenance mismatch")
+    source, target = domains(direction)
+    base = FEATURE_ROOT / direction
+    current_splits = {
+        "source_train": split_sha256(base / f"{source}_train"),
+        "source_val": split_sha256(base / f"{source}_val"),
+        "target_train": split_sha256(base / f"{target}_train"),
+        "target_val": split_sha256(base / f"{target}_val"),
+    }
+    for artifact in (source_cp, adapted_cp, source_result, adapted_result):
+        if artifact["prepared_split_sha256"] != current_splits:
+            raise ValueError("Experiment artifact prepared split provenance mismatch")
+    if source_result["target_development_split"] != f"{target}_val" or adapted_result["target_development_split"] != f"{target}_val":
+        raise ValueError("Experiments must use target validation as development data")
     if adapted_result["config_sha256"] != sha256(config_path):
         raise ValueError("Adapted result config hash differs from selected config")
     if adapted_result["checkpoint"] != str(adapted_path):
@@ -147,8 +168,8 @@ def collect_representation(model, x, batch_size=1024):
 
 def evaluate_model(model, source_val_path, target_development_path, source_threshold, input_dim):
     """Full-split evaluation only; target labels never affect training or selection."""
-    source_labels, source_scores = collect_scores(model, make_loader(source_val_path, input_dim, batch_size=1024, training=False))
-    target_labels, target_scores = collect_scores(model, make_loader(target_development_path, input_dim, batch_size=1024, training=False))
+    source_labels, source_scores = collect_scores(model, ParquetBatchStream(source_val_path, 1024, False, 0, True))
+    target_labels, target_scores = collect_scores(model, ParquetBatchStream(target_development_path, 1024, False, 0, True))
     return {
         "source_val": compute_metrics(source_labels, source_scores, source_threshold),
         "target_development": compute_metrics(target_labels, target_scores, source_threshold),
@@ -188,41 +209,53 @@ def class_conditional_mmd(source_z, source_y, target_z, target_y, sample_size=12
     rng = np.random.default_rng(seed)
     sn, sa, tn, ta = [torch.from_numpy(group[rng.choice(len(group), n, replace=False)]) for group in groups]
     with torch.no_grad():
-        nn = float(mmd_loss(sn, tn)[0]); aa = float(mmd_loss(sa, ta)[0])
-        na = float(mmd_loss(sn, ta)[0]); an = float(mmd_loss(sa, tn)[0])
+        bandwidth_squared = estimate_bandwidth_squared(torch.cat([sn, sa]), torch.cat([tn, ta]))
+        def shared_mmd(a, b):
+            return float((rbf_kernel(a, a, bandwidth_squared).mean()
+                          + rbf_kernel(b, b, bandwidth_squared).mean()
+                          - 2 * rbf_kernel(a, b, bandwidth_squared).mean()).item())
+        nn = shared_mmd(sn, tn); aa = shared_mmd(sa, ta)
+        na = shared_mmd(sn, ta); an = shared_mmd(sa, tn)
     same, cross = (nn + aa) / 2, (na + an) / 2
-    return {"sample_size_per_class": n, "normal_normal": nn, "attack_attack": aa,
+    return {"sample_size_per_class": n, "shared_bandwidth": float(torch.sqrt(bandwidth_squared)),
+            "normal_normal": nn, "attack_attack": aa,
             "normal_attack": na, "attack_normal": an, "same_class": same,
             "cross_class": cross, "separation_ratio": cross / max(same, EPS)}
 
 
 def gradient_cosine(model, source_train_path, target_train_path, input_dim, counts, batches=20, batch_size=256):
-    source_loader = make_loader(source_train_path, input_dim, batch_size=batch_size, training=False)
-    target_loader = make_unlabeled_loader(target_train_path, input_dim, batch_size=batch_size)
+    source_loader = ParquetBatchStream(source_train_path, batch_size, False, 0, True)
+    target_loader = ParquetBatchStream(target_train_path, batch_size, True, 1000, False, drop_last=True)
     params = [*model.fc1.parameters(), *model.bn1.parameters(),
               *model.fc2.parameters(), *model.bn2.parameters()]
     class_counts = torch.as_tensor(counts, dtype=torch.float32)
     weights = class_counts.sum() / (2 * class_counts)
     criterion = nn.CrossEntropyLoss(weight=weights)
-    model.eval()  # BN and dropout match inference; no parameter update.
+    training_flags = {module: module.training for module in model.modules()}
+    model.train()
+    freeze_bn_stats(model)
     cosines = []
-    target_iter = iter(target_loader)
-    for source_x, source_y in source_loader:
-        if len(cosines) >= batches:
-            break
-        target_x = next(target_iter)
-        n = min(len(source_x), len(target_x))
-        if n < 2:
-            continue
-        z, logits = model(torch.cat([source_x[:n], target_x[:n]]))
-        ce = criterion(logits[:n], source_y[:n])
-        mmd = mmd_loss(z[:n], z[n:])[0]
-        g_ce = torch.autograd.grad(ce, params, retain_graph=True, allow_unused=True)
-        g_mmd = torch.autograd.grad(mmd, params, allow_unused=True)
-        flat_ce = torch.cat([torch.zeros_like(p).flatten() if g is None else g.flatten() for p, g in zip(params, g_ce)])
-        flat_mmd = torch.cat([torch.zeros_like(p).flatten() if g is None else g.flatten() for p, g in zip(params, g_mmd)])
-        if flat_ce.norm() > EPS and flat_mmd.norm() > EPS:
-            cosines.append(float(F.cosine_similarity(flat_ce, flat_mmd, dim=0)))
+    try:
+        target_iter = iter(target_loader)
+        for source_x, source_y in source_loader:
+            if len(cosines) >= batches:
+                break
+            target_x = next(target_iter)
+            n = min(len(source_x), len(target_x))
+            if n < 2:
+                continue
+            z, logits = model(torch.cat([source_x[:n], target_x[:n]]))
+            ce = criterion(logits[:n], source_y[:n])
+            mmd = mmd_loss(z[:n], z[n:])[0]
+            g_ce = torch.autograd.grad(ce, params, retain_graph=True, allow_unused=True)
+            g_mmd = torch.autograd.grad(mmd, params, allow_unused=True)
+            flat_ce = torch.cat([torch.zeros_like(p).flatten() if g is None else g.flatten() for p, g in zip(params, g_ce)])
+            flat_mmd = torch.cat([torch.zeros_like(p).flatten() if g is None else g.flatten() for p, g in zip(params, g_mmd)])
+            if flat_ce.norm() > EPS and flat_mmd.norm() > EPS:
+                cosines.append(float(F.cosine_similarity(flat_ce, flat_mmd, dim=0)))
+    finally:
+        for module, was_training in training_flags.items():
+            module.training = was_training
     if not cosines:
         raise ValueError("No usable batches for gradient cosine")
     return {"batches": len(cosines), "mean": float(np.mean(cosines)),
@@ -268,22 +301,30 @@ def threshold_diagnostic(labels, scores, source_threshold, applied_metrics, min_
                                     gap >= min_f1_gap)}
 
 
-def diagnose(target_delta, source_delta, marginal, class_alignment, gradient, domain, prior, threshold, mmd_active=True):
+def diagnose(target_delta, source_delta, marginal, class_alignment, gradient, domain, prior, threshold, mmd_active=True, bn=None):
     ap_drop = target_delta["pr_auc"]
     reduction = marginal["relative_mmd_reduction"]
     before_ratio = class_alignment["before"]["separation_ratio"]
     after_ratio = class_alignment["after"]["separation_ratio"]
     causes = []
-    if mmd_active and ap_drop < -RULES["minimum_ap_drop"] and reduction > RULES["mmd_reduction"]:
-        causes.append("marginal_over_alignment")
+    if mmd_active and reduction > RULES["mmd_reduction"] and domain["after"]["auc_mean"] > RULES["weak_alignment_auc"]:
+        causes.append("mmd_reduced_but_domains_still_separable")
     if after_ratio < before_ratio * RULES["separation_ratio_retention"]:
         causes.append("class_mixing")
     if mmd_active and gradient["mean"] < 0 and gradient["negative_fraction"] > RULES["gradient_negative_fraction"]:
         causes.append("ce_mmd_gradient_conflict")
     if mmd_active and domain["after"]["auc_mean"] > RULES["weak_alignment_auc"]:
         causes.append("weak_alignment")
-    if mmd_active and domain["after"]["auc_mean"] < RULES["strong_alignment_auc"] and ap_drop < -RULES["minimum_ap_drop"]:
+    if mmd_active and domain["after"]["auc_mean"] < RULES["possible_over_alignment_auc"] and ap_drop < -RULES["minimum_ap_drop"]:
         causes.append("possible_over_alignment")
+    if source_delta > RULES["source_specialization_ap_gain"] and ap_drop < -RULES["minimum_ap_drop"]:
+        causes.append("source_over_specialization")
+    if bn is not None and any(
+        values["target_shift"] > values["source_shift"] * RULES["bn_shift_ratio"]
+        and values["target_minus_source"] > RULES["bn_shift_absolute_gap"]
+        for values in bn["after"].values()
+    ):
+        causes.append("normalization_shift")
     if prior["absolute_gap"] > RULES["prior_gap"]:
         causes.append("label_prior_shift")
     if threshold["after"]["threshold_issue"]:
@@ -303,7 +344,7 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
     source_model, adapted_model, source_result, adapted_result, paths = load_models(direction, seed, config_path)
     base = FEATURE_ROOT / direction
     source_val_path = base / f"{source}_val"
-    target_development_path = base / f"{target}_test"
+    target_development_path = base / f"{target}_val"
     source_train_path = base / f"{source}_train"
     target_train_path = base / f"{target}_train"
     input_dim = len(COMMON_FEATURES)
@@ -320,11 +361,11 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
                                   adapted_result["threshold"], input_dim)
     # Full-split AP must agree with the saved run before comparing representations.
     # AP can shift slightly when tied float32 scores are batched differently.
-    if abs(baseline_eval["target_development"]["pr_auc"] - source_result["target_test"]["pr_auc"]) > 1e-3:
+    if abs(baseline_eval["target_development"]["pr_auc"] - source_result["target_development"]["pr_auc"]) > 1e-3:
         raise ValueError("Source-only target AP differs from saved experiment result")
     if abs(adapted_eval["target_development"]["pr_auc"] - adapted_result["cross_domain"]["pr_auc"]) > 1e-3:
         raise ValueError("Adapted target AP differs from saved experiment result")
-    target_delta = {key: adapted_result["cross_domain"][key] - source_result["target_test"][key]
+    target_delta = {key: adapted_result["cross_domain"][key] - source_result["target_development"][key]
                     for key in ("pr_auc", "roc_auc", "macro_f1", "recall", "fpr")}
     source_delta = adapted_eval["source_val"]["pr_auc"] - baseline_eval["source_val"]["pr_auc"]
 
@@ -361,7 +402,24 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
                                        adapted_result["threshold"], adapted_eval["target_development"]),
     }
     mmd_active = float(adapted_result["lambda_mmd"]) > 0
-    causes = diagnose(target_delta, source_delta, marginal, class_alignment, gradient, domain, prior, threshold, mmd_active)
+    causes = diagnose(target_delta, source_delta, marginal, class_alignment, gradient, domain, prior, threshold, mmd_active, bn)
+    ce_control = None
+    if mmd_active:
+        control_path = output_paths(direction, seed, ROOT / "configs/proposal_mmd_lambda0.json")[1]
+        if control_path.is_file():
+            control = json.loads(control_path.read_text())
+            if (control["direction"] != direction or control["seed"] != seed
+                    or control["target_development_split"] != f"{target}_val"
+                    or control["source_checkpoint_sha256"] != paths["source_checkpoint_sha256"]
+                    or control["config_sha256"] != sha256(ROOT / "configs/proposal_mmd_lambda0.json")
+                    or control["preprocessor_sha256"] != source_result["preprocessor_sha256"]):
+                raise ValueError(f"CE-only control provenance mismatch: {control_path}")
+            ce_ap = control["cross_domain"]["pr_auc"]
+            ce_control = {"result": str(control_path), "target_development_ap": ce_ap,
+                          "delta_vs_source_only_ap": ce_ap - source_result["target_development"]["pr_auc"],
+                          "mmd_minus_ce_only_ap": adapted_result["cross_domain"]["pr_auc"] - ce_ap}
+            if ce_control["delta_vs_source_only_ap"] < -RULES["minimum_ap_drop"]:
+                causes.append("continued_source_ce_associated_with_target_drop")
     result = {
         "direction": direction, "seed": seed, "config": str(config_path), "config_sha256": sha256(config_path),
         "artifacts": paths,
@@ -374,7 +432,7 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
                      "mmd_repeats": mmd_repeats, "gradient_batches": gradient_batches, "cv_folds": cv_folds},
         "negative_transfer": {"detected": bool(target_delta["pr_auc"] < 0),
                               "delta_target_pr_auc": target_delta["pr_auc"], "target_delta": target_delta,
-                              "source_only_target": {k: source_result["target_test"][k] for k in target_delta},
+                              "source_only_target": {k: source_result["target_development"][k] for k in target_delta},
                               "adapted_target": {k: adapted_result["cross_domain"][k] for k in target_delta}},
         "source_preservation": {"source_val_ap_before": baseline_eval["source_val"]["pr_auc"],
                                 "source_val_ap_after": adapted_eval["source_val"]["pr_auc"],
@@ -391,15 +449,17 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
         "batchnorm_shift": bn,
         "threshold": threshold,
         "mmd_stability": {"before": mmd["before"], "after": mmd["after"]},
+        "continued_ce_control": ce_control,
         "likely_causes": causes,
         "diagnostic_rules": RULES,
         "diagnostic_rules_are_heuristic": True,
         "diagnostic_only": True,
+        "post_hoc": True,
         "target_labels_used_training": False,
         "target_labels_used_checkpoint_selection": False,
         "target_labels_used_threshold_selection": False,
         "data_roles": {"source_labeled_diagnostics": f"{source}_val",
-                       "target_labeled_diagnostics": f"{target}_test (development)",
+                       "target_labeled_diagnostics": f"{target}_val (development)",
                        "source_gradient": f"{source}_train",
                        "target_gradient_features_only": f"{target}_train"},
     }
@@ -437,6 +497,10 @@ def print_summary(result, output):
     print(f"[8] Threshold | AP={threshold['target_ap']:.4f}, ROC={threshold['target_roc_auc']:.4f}, "
           f"F1 source/oracle={threshold['f1_source_threshold']:.4f}/{threshold['target_oracle_f1_development_only']:.4f}")
     print(f"Likely causes (heuristic): {', '.join(result['likely_causes']) or 'none'}")
+    if result["continued_ce_control"] is not None:
+        control = result["continued_ce_control"]
+        print(f"CE-only control | Target AP={control['target_development_ap']:.4f}, "
+              f"MMD minus CE-only={control['mmd_minus_ce_only_ap']:+.4f}")
     print(f"Saved: {output}")
 
 
