@@ -1,8 +1,8 @@
 {
-  "protocol_id": "proposal_mmd_lambda0",
+  "protocol_id": "proposal_mmd_lambda0001",
   "feature_count": 5,
   "development_split": "target_val",
-  "lambda_mmd": 0.0,
+  "lambda_mmd": 0.001,
   "mmd": {
     "layer": "latent_168",
     "kernel": "single_rbf",

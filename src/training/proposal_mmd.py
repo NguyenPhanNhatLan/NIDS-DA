@@ -20,7 +20,7 @@ from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.adaptation import mmd_loss
 from training.baseline import set_seed
-from training.proposal_class_aware import class_aware_mmd_loss, pseudo_label_counts
+from training.proposal_class_aware import audit_pseudo_labels, class_aware_mmd_loss, pseudo_label_counts
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mkmmd import multi_kernel_mmd_loss
 
@@ -563,6 +563,12 @@ def run(
     model.load_state_dict(source_checkpoint["model_state_dict"])
     print(f"Loaded source checkpoint: {source_checkpoint_path}")
 
+    pseudo_label_audit = None
+    if config["method"] == "class_aware_mmd":
+        pseudo_label_audit = audit_pseudo_labels(
+            model, target_train_path, config["mmd"]["target_pseudo_label_confidence"]
+        )
+
     (
         model,
         best_epoch,
@@ -578,11 +584,6 @@ def run(
         expected_source_ap=float(source_checkpoint["best_source_val_ap"]),
     )
 
-    # --------------------------------------------------------
-    # Threshold:
-    # SOURCE VALIDATION ONLY
-    # --------------------------------------------------------
-
     threshold_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
 
     val_labels, val_scores = collect_scores(
@@ -594,14 +595,6 @@ def run(
         val_labels,
         val_scores,
     )
-
-    # --------------------------------------------------------
-    # Evaluation
-    #
-    # Target labels are first read HERE,
-    # after training/checkpoint/threshold.
-    # --------------------------------------------------------
-
     within_metrics = evaluate_split(
         model,
         source_val_path,
@@ -666,6 +659,7 @@ def run(
             "config_sha256": sha256(config_path),
             "common_feature_config_sha256": sha256(COMMON_CONFIG),
             "history": history,
+            **({"source_only_pseudo_label_audit": pseudo_label_audit} if pseudo_label_audit else {}),
             "model_state_dict": {
                 key: value.detach().cpu() for key, value in model.state_dict().items()
             },
@@ -718,6 +712,7 @@ def run(
         "checkpoint": str(checkpoint_path),
         "config_sha256": sha256(config_path),
         "common_feature_config_sha256": sha256(COMMON_CONFIG),
+        **({"source_only_pseudo_label_audit": pseudo_label_audit} if pseudo_label_audit else {}),
     }
 
     output_dir = output_path.parent
