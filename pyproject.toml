@@ -21,6 +21,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+analytics = ["duckdb>=1.0,<2"]
+bigdata = ["pyspark>=3.5,<4"]
 classical = ["xgboost"]
 kaggle-stream = ["requests", "stream-unzip"]
 

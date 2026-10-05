@@ -95,3 +95,14 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 
 Xem [protocol](docs/thesis_protocol.md), [manifest](docs/experiment_manifest.md),
 [data dictionary](docs/data_dictionary/) và [mapping audit](docs/feature_mapping_audit.csv).
+
+Interface Research → BI nằm ở `src/analytics/build_dashboard_tables.py`:
+
+```bash
+pip install -e '.[analytics]'
+PYTHONPATH=src python -m analytics.build_dashboard_tables --duckdb
+```
+
+Xuất 5 bảng Parquet và DuckDB snapshot cho Tableau. Xem
+[analytics pipeline](docs/analytics_pipeline.md) để biết grain, phase filters,
+provenance, connector và cách refresh snapshot.

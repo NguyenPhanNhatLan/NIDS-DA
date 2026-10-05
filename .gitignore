@@ -62,3 +62,8 @@ Thumbs.db
 /legacy/data/
 /legacy/models/
 /legacy/results/
+
+# Rebuildable BI snapshots
+/analytics/
+*.duckdb
+*.duckdb.wal

@@ -17,35 +17,22 @@ from sklearn.model_selection import (
 )
 
 from features.common_features import COMMON_FEATURES
+from features.parquet_vectors import vector_matrix
 from training.adaptation import mmd_loss
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
-FEATURE_ROOT = (
-    ROOT
-    / "data"
-    / "features"
-    / "proposal_v2"
-)
+FEATURE_ROOT = ROOT / "data" / "features" / "proposal_v2"
 
-RESULT_ROOT = (
-    ROOT
-    / "results"
-    / "proposal_v2"
-    / "domain_shift"
-)
+RESULT_ROOT = ROOT / "results" / "proposal_v2" / "domain_shift"
 
-COMMON_CONFIG = (
-    ROOT
-    / "configs"
-    / "common_features_v2.json"
-)
+COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
 
 # =========================================================
 # Basic helpers
 # =========================================================
+
 
 def direction_domains(direction):
     if direction == "unsw_to_cicids":
@@ -54,9 +41,7 @@ def direction_domains(direction):
     if direction == "cicids_to_unsw":
         return "cicids", "unsw"
 
-    raise ValueError(
-        f"Unknown direction: {direction}"
-    )
+    raise ValueError(f"Unknown direction: {direction}")
 
 
 def sha256(path):
@@ -77,14 +62,10 @@ def sha256(path):
 
 
 def parquet_files(directory):
-    files = sorted(
-        Path(directory).glob("*.parquet")
-    )
+    files = sorted(Path(directory).glob("*.parquet"))
 
     if not files:
-        raise FileNotFoundError(
-            f"No parquet files in {directory}"
-        )
+        raise FileNotFoundError(f"No parquet files in {directory}")
 
     return files
 
@@ -98,6 +79,7 @@ def parquet_files(directory):
 # - avoids loading 2M rows into RAM
 # =========================================================
 
+
 def sample_features(
     directory,
     max_samples,
@@ -110,18 +92,12 @@ def sample_features(
     for path in files:
         parquet = pq.ParquetFile(path)
 
-        row_counts.append(
-            parquet.metadata.num_rows
-        )
+        row_counts.append(parquet.metadata.num_rows)
 
-    total_rows = int(
-        sum(row_counts)
-    )
+    total_rows = int(sum(row_counts))
 
     if total_rows == 0:
-        raise ValueError(
-            f"Empty dataset: {directory}"
-        )
+        raise ValueError(f"Empty dataset: {directory}")
 
     sample_size = min(
         int(max_samples),
@@ -152,16 +128,12 @@ def sample_features(
                 columns=["features"],
             ):
 
-                features = batch.column(
-                    "features"
-                )
+                features = batch.column("features")
 
                 n_rows = len(features)
 
                 batch_start = global_offset
-                batch_end = (
-                    global_offset + n_rows
-                )
+                batch_end = global_offset + n_rows
 
                 left = np.searchsorted(
                     selected,
@@ -177,33 +149,12 @@ def sample_features(
 
                 if right > left:
 
-                    local_indices = (
-                        selected[left:right]
-                        - batch_start
-                    )
+                    local_indices = selected[left:right] - batch_start
 
-                    # FixedSizeListArray -> matrix
-                    values = (
-                        features
-                        .values
-                        .to_numpy(
-                            zero_copy_only=False
-                        )
-                    )
-
-                    input_dim = (
-                        features.type.list_size
-                    )
-
-                    matrix = values.reshape(
-                        n_rows,
-                        input_dim,
-                    )
+                    matrix = vector_matrix(features, path)
 
                     output.append(
-                        matrix[
-                            local_indices
-                        ].astype(
+                        matrix[local_indices].astype(
                             np.float32,
                             copy=True,
                         )
@@ -212,9 +163,7 @@ def sample_features(
                 global_offset = batch_end
 
     if not output:
-        raise RuntimeError(
-            "Sampling produced no rows"
-        )
+        raise RuntimeError("Sampling produced no rows")
 
     result = np.concatenate(
         output,
@@ -229,14 +178,9 @@ def sample_features(
         )
 
     if result.ndim != 2:
-        raise ValueError(
-            f"Expected matrix, got "
-            f"{result.shape}"
-        )
+        raise ValueError(f"Expected matrix, got " f"{result.shape}")
 
-    if result.shape[1] != len(
-        COMMON_FEATURES
-    ):
+    if result.shape[1] != len(COMMON_FEATURES):
         raise ValueError(
             f"Expected "
             f"{len(COMMON_FEATURES)} "
@@ -245,9 +189,7 @@ def sample_features(
         )
 
     if not np.isfinite(result).all():
-        raise ValueError(
-            f"NaN/Inf found in {directory}"
-        )
+        raise ValueError(f"NaN/Inf found in {directory}")
 
     return result, total_rows
 
@@ -256,23 +198,18 @@ def sample_features(
 # 1. KS test
 # =========================================================
 
+
 def compute_ks(
     source,
     target,
 ):
     results = {}
 
-    for index, feature in enumerate(
-        COMMON_FEATURES
-    ):
+    for index, feature in enumerate(COMMON_FEATURES):
 
-        source_values = (
-            source[:, index]
-        )
+        source_values = source[:, index]
 
-        target_values = (
-            target[:, index]
-        )
+        target_values = target[:, index]
 
         test = ks_2samp(
             source_values,
@@ -282,32 +219,12 @@ def compute_ks(
         )
 
         results[feature] = {
-            "ks_statistic": float(
-                test.statistic
-            ),
-            "p_value": float(
-                test.pvalue
-            ),
-            "source_median": float(
-                np.median(
-                    source_values
-                )
-            ),
-            "target_median": float(
-                np.median(
-                    target_values
-                )
-            ),
-            "source_mean": float(
-                np.mean(
-                    source_values
-                )
-            ),
-            "target_mean": float(
-                np.mean(
-                    target_values
-                )
-            ),
+            "ks_statistic": float(test.statistic),
+            "p_value": float(test.pvalue),
+            "source_median": float(np.median(source_values)),
+            "target_median": float(np.median(target_values)),
+            "source_mean": float(np.mean(source_values)),
+            "target_mean": float(np.mean(target_values)),
         }
 
     return results
@@ -324,6 +241,7 @@ def compute_ks(
 # Repeat subsampling to reduce sampling noise.
 # =========================================================
 
+
 def compute_input_mmd(
     source,
     target,
@@ -338,9 +256,7 @@ def compute_input_mmd(
     )
 
     if n < 2:
-        raise ValueError(
-            "MMD requires at least 2 rows"
-        )
+        raise ValueError("MMD requires at least 2 rows")
 
     rng = np.random.default_rng(seed)
 
@@ -361,39 +277,23 @@ def compute_input_mmd(
             replace=False,
         )
 
-        source_tensor = (
-            torch.from_numpy(
-                source[source_index]
-            )
-            .float()
-        )
+        source_tensor = torch.from_numpy(source[source_index]).float()
 
-        target_tensor = (
-            torch.from_numpy(
-                target[target_index]
-            )
-            .float()
-        )
+        target_tensor = torch.from_numpy(target[target_index]).float()
 
         # CPU intentionally:
         # deterministic diagnostic,
         # no gradient required.
         with torch.no_grad():
 
-            loss, bandwidth = (
-                mmd_loss(
-                    source_tensor,
-                    target_tensor,
-                )
+            loss, bandwidth = mmd_loss(
+                source_tensor,
+                target_tensor,
             )
 
-        mmd_values.append(
-            float(loss.item())
-        )
+        mmd_values.append(float(loss.item()))
 
-        bandwidth_values.append(
-            float(bandwidth.item())
-        )
+        bandwidth_values.append(float(bandwidth.item()))
 
     mmd_array = np.asarray(
         mmd_values,
@@ -408,31 +308,11 @@ def compute_input_mmd(
     return {
         "sample_size_per_domain": n,
         "repeats": int(repeats),
-
-        "mmd2_mean": float(
-            mmd_array.mean()
-        ),
-
-        "mmd2_std": float(
-            mmd_array.std(ddof=1)
-            if repeats > 1
-            else 0.0
-        ),
-
-        "mmd2_runs": [
-            float(value)
-            for value in mmd_values
-        ],
-
-        "bandwidth_mean": float(
-            bandwidth_array.mean()
-        ),
-
-        "bandwidth_std": float(
-            bandwidth_array.std(ddof=1)
-            if repeats > 1
-            else 0.0
-        ),
+        "mmd2_mean": float(mmd_array.mean()),
+        "mmd2_std": float(mmd_array.std(ddof=1) if repeats > 1 else 0.0),
+        "mmd2_runs": [float(value) for value in mmd_values],
+        "bandwidth_mean": float(bandwidth_array.mean()),
+        "bandwidth_std": float(bandwidth_array.std(ddof=1) if repeats > 1 else 0.0),
     }
 
 
@@ -450,6 +330,7 @@ def compute_input_mmd(
 # AUC -> 1:
 #   strong domain shift
 # =========================================================
+
 
 def compute_domain_auc(
     source,
@@ -508,35 +389,19 @@ def compute_domain_auc(
     )
 
     return {
-        "classifier":
-            "logistic_regression",
-
-        "samples_per_domain":
-            int(n),
-
-        "cv_folds":
-            int(folds),
-
-        "auc_mean":
-            float(scores.mean()),
-
-        "auc_std":
-            float(
-                scores.std(ddof=1)
-                if len(scores) > 1
-                else 0.0
-            ),
-
-        "auc_folds": [
-            float(score)
-            for score in scores
-        ],
+        "classifier": "logistic_regression",
+        "samples_per_domain": int(n),
+        "cv_folds": int(folds),
+        "auc_mean": float(scores.mean()),
+        "auc_std": float(scores.std(ddof=1) if len(scores) > 1 else 0.0),
+        "auc_folds": [float(score) for score in scores],
     }
 
 
 # =========================================================
 # Run one direction
 # =========================================================
+
 
 def run(
     direction,
@@ -546,67 +411,38 @@ def run(
     mmd_repeats=5,
     cv_folds=5,
 ):
-    source_domain, target_domain = (
-        direction_domains(direction)
-    )
+    source_domain, target_domain = direction_domains(direction)
 
-    base = (
-        FEATURE_ROOT
-        / direction
-    )
+    base = FEATURE_ROOT / direction
 
-    source_path = (
-        base
-        / f"{source_domain}_train"
-    )
+    source_path = base / f"{source_domain}_train"
 
-    target_path = (
-        base
-        / f"{target_domain}_train"
-    )
+    target_path = base / f"{target_domain}_train"
 
-    print(
-        f"\n=== {direction} ==="
-    )
+    print(f"\n=== {direction} ===")
 
-    print(
-        f"Source train: {source_path}"
-    )
+    print(f"Source train: {source_path}")
 
-    print(
-        f"Target train: {target_path}"
-    )
+    print(f"Target train: {target_path}")
 
     # Different seed offsets avoid
     # selecting identical index patterns
     # accidentally across domains.
-    source, source_total = (
-        sample_features(
-            source_path,
-            analysis_sample,
-            seed,
-        )
+    source, source_total = sample_features(
+        source_path,
+        analysis_sample,
+        seed,
     )
 
-    target, target_total = (
-        sample_features(
-            target_path,
-            analysis_sample,
-            seed + 1,
-        )
+    target, target_total = sample_features(
+        target_path,
+        analysis_sample,
+        seed + 1,
     )
 
-    print(
-        f"Source rows: "
-        f"{source_total:,} "
-        f"(sample={len(source):,})"
-    )
+    print(f"Source rows: " f"{source_total:,} " f"(sample={len(source):,})")
 
-    print(
-        f"Target rows: "
-        f"{target_total:,} "
-        f"(sample={len(target):,})"
-    )
+    print(f"Target rows: " f"{target_total:,} " f"(sample={len(target):,})")
 
     # ---------------------------------
     # KS
@@ -645,104 +481,48 @@ def run(
     # ---------------------------------
 
     preprocessor_path = (
-        ROOT
-        / "models"
-        / "proposal_v2"
-        / direction
-        / "preprocessor.joblib"
+        ROOT / "models" / "proposal_v2" / direction / "preprocessor.joblib"
     )
 
     if not preprocessor_path.exists():
-        raise FileNotFoundError(
-            f"Missing fitted processor: "
-            f"{preprocessor_path}"
-        )
+        raise FileNotFoundError(f"Missing fitted processor: " f"{preprocessor_path}")
 
     result = {
-        "protocol":
-            "proposal_v2",
-
-        "analysis":
-            "pre_adaptation_domain_shift",
-
-        "direction":
-            direction,
-
-        "source_domain":
-            source_domain,
-
-        "target_domain":
-            target_domain,
-
-        "seed":
-            seed,
-
-        "feature_count":
-            len(COMMON_FEATURES),
-
-        "features":
-            list(COMMON_FEATURES),
-
-        "input_space":
-            (
-                "5D common feature space "
-                "after source-train fitted "
-                "median -> signed_log1p "
-                "-> RobustScaler"
-            ),
-
+        "protocol": "proposal_v2",
+        "analysis": "pre_adaptation_domain_shift",
+        "direction": direction,
+        "source_domain": source_domain,
+        "target_domain": target_domain,
+        "seed": seed,
+        "feature_count": len(COMMON_FEATURES),
+        "features": list(COMMON_FEATURES),
+        "input_space": (
+            "5D common feature space "
+            "after source-train fitted "
+            "median -> signed_log1p "
+            "-> RobustScaler"
+        ),
         "data_roles": {
-            "source":
-                f"{source_domain}_train",
-
-            "target":
-                f"{target_domain}_train",
-
-            "target_intrusion_labels_used":
-                False,
+            "source": f"{source_domain}_train",
+            "target": f"{target_domain}_train",
+            "target_intrusion_labels_used": False,
         },
-
         "sampling": {
-            "analysis_sample":
-                int(analysis_sample),
-
-            "source_total_rows":
-                int(source_total),
-
-            "target_total_rows":
-                int(target_total),
-
-            "source_sample_rows":
-                int(len(source)),
-
-            "target_sample_rows":
-                int(len(target)),
+            "analysis_sample": int(analysis_sample),
+            "source_total_rows": int(source_total),
+            "target_total_rows": int(target_total),
+            "source_sample_rows": int(len(source)),
+            "target_sample_rows": int(len(target)),
         },
-
         "provenance": {
-            "common_feature_config":
-                str(COMMON_CONFIG),
-
-            "common_feature_config_sha256":
-                sha256(COMMON_CONFIG),
-
-            "preprocessor":
-                str(preprocessor_path),
-
-            "preprocessor_sha256":
-                sha256(
-                    preprocessor_path
-                ),
+            "common_feature_config": str(COMMON_CONFIG),
+            "common_feature_config_sha256": sha256(COMMON_CONFIG),
+            "preprocessor": str(preprocessor_path),
+            "preprocessor_sha256": sha256(preprocessor_path),
         },
-
-        "ks_by_feature":
-            ks,
-
-        "input_mmd":
-            mmd,
-
-        "domain_classifier":
-            domain_auc,
+        "ks_by_feature": ks,
+        "input_mmd": mmd,
+        "domain_classifier": domain_auc,
     }
 
     # ---------------------------------
@@ -754,16 +534,10 @@ def run(
         exist_ok=True,
     )
 
-    output = (
-        RESULT_ROOT
-        / f"{direction}_seed{seed}.json"
-    )
+    output = RESULT_ROOT / f"{direction}_seed{seed}.json"
 
     if output.exists():
-        raise FileExistsError(
-            f"Result already exists: "
-            f"{output}"
-        )
+        raise FileExistsError(f"Result already exists: " f"{output}")
 
     with output.open(
         "x",
@@ -783,34 +557,19 @@ def run(
     # Console summary
     # ---------------------------------
 
-    print(
-        "\nInput MMD²:"
-    )
+    print("\nInput MMD²:")
 
-    print(
-        f"{mmd['mmd2_mean']:.6f} "
-        f"± "
-        f"{mmd['mmd2_std']:.6f}"
-    )
+    print(f"{mmd['mmd2_mean']:.6f} " f"± " f"{mmd['mmd2_std']:.6f}")
 
-    print(
-        "\nDomain classifier AUC:"
-    )
+    print("\nDomain classifier AUC:")
 
-    print(
-        f"{domain_auc['auc_mean']:.6f} "
-        f"± "
-        f"{domain_auc['auc_std']:.6f}"
-    )
+    print(f"{domain_auc['auc_mean']:.6f} " f"± " f"{domain_auc['auc_std']:.6f}")
 
-    print(
-        "\nKS statistics:"
-    )
+    print("\nKS statistics:")
 
     sorted_ks = sorted(
         ks.items(),
-        key=lambda item:
-            item[1]["ks_statistic"],
+        key=lambda item: item[1]["ks_statistic"],
         reverse=True,
     )
 
@@ -824,9 +583,7 @@ def run(
             f"{values['p_value']:.3e}"
         )
 
-    print(
-        f"\nSaved: {output}"
-    )
+    print(f"\nSaved: {output}")
 
     return result
 
@@ -835,12 +592,10 @@ def run(
 # CLI
 # =========================================================
 
+
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Pre-adaptation domain shift "
-            "diagnostics for proposal suite."
-        )
+        description=("Pre-adaptation domain shift " "diagnostics for proposal suite.")
     )
 
     parser.add_argument(
@@ -863,10 +618,7 @@ def main():
         "--analysis-sample",
         type=int,
         default=100_000,
-        help=(
-            "Maximum rows sampled per "
-            "domain for KS/domain AUC."
-        ),
+        help=("Maximum rows sampled per " "domain for KS/domain AUC."),
     )
 
     parser.add_argument(
@@ -890,24 +642,16 @@ def main():
     args = parser.parse_args()
 
     if args.analysis_sample < 2:
-        parser.error(
-            "analysis-sample must be >= 2"
-        )
+        parser.error("analysis-sample must be >= 2")
 
     if args.mmd_sample < 2:
-        parser.error(
-            "mmd-sample must be >= 2"
-        )
+        parser.error("mmd-sample must be >= 2")
 
     if args.mmd_repeats < 1:
-        parser.error(
-            "mmd-repeats must be >= 1"
-        )
+        parser.error("mmd-repeats must be >= 1")
 
     if args.cv_folds < 2:
-        parser.error(
-            "cv-folds must be >= 2"
-        )
+        parser.error("cv-folds must be >= 2")
 
     if args.direction == "both":
 
@@ -918,14 +662,10 @@ def main():
             run(
                 direction,
                 seed=args.seed,
-                analysis_sample=
-                    args.analysis_sample,
-                mmd_sample=
-                    args.mmd_sample,
-                mmd_repeats=
-                    args.mmd_repeats,
-                cv_folds=
-                    args.cv_folds,
+                analysis_sample=args.analysis_sample,
+                mmd_sample=args.mmd_sample,
+                mmd_repeats=args.mmd_repeats,
+                cv_folds=args.cv_folds,
             )
 
     else:
@@ -933,14 +673,10 @@ def main():
         run(
             args.direction,
             seed=args.seed,
-            analysis_sample=
-                args.analysis_sample,
-            mmd_sample=
-                args.mmd_sample,
-            mmd_repeats=
-                args.mmd_repeats,
-            cv_folds=
-                args.cv_folds,
+            analysis_sample=args.analysis_sample,
+            mmd_sample=args.mmd_sample,
+            mmd_repeats=args.mmd_repeats,
+            cv_folds=args.cv_folds,
         )
 
 

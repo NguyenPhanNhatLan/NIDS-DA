@@ -39,11 +39,17 @@ class ProposalDataTests(unittest.TestCase):
             (source / "data.parquet").write_bytes(original)
             first = list(iter_parquet_batches(source, 8, True, 42, True))
             second = list(iter_parquet_batches(source, 8, True, 42, True))
-            self.assertTrue(all(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
-                                for a, b in zip(first, second)))
+            self.assertTrue(
+                all(
+                    np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
+                    for a, b in zip(first, second)
+                )
+            )
             self.assertEqual(sum(len(x) for x, _ in first), 27)
             ordered = list(iter_parquet_batches(source, 8, False, 42, True))
-            self.assertTrue(np.array_equal(np.concatenate([x.numpy() for x, _ in ordered]), rows))
+            self.assertTrue(
+                np.array_equal(np.concatenate([x.numpy() for x, _ in ordered]), rows)
+            )
             target_batches = list(iter_parquet_batches(target, 8, False, 42, False))
             self.assertEqual(sum(len(x) for x in target_batches), 27)
 
@@ -58,17 +64,31 @@ class ProposalDataTests(unittest.TestCase):
             target[:, 0] = [1000, np.nan]
             for domain, values in (("unsw", source), ("cicids", target)):
                 for split in ("train", "val", "test"):
-                    write_vectors(raw / f"{domain}_{split}", values, np.arange(len(values)) % 2)
-            with patch.object(prep, "ROOT", root), patch.object(prep, "RAW_ROOT", raw), \
-                 patch.object(prep, "OUTPUT_ROOT", output):
+                    write_vectors(
+                        raw / f"{domain}_{split}", values, np.arange(len(values)) % 2
+                    )
+            with (
+                patch.object(prep, "ROOT", root),
+                patch.object(prep, "RAW_ROOT", raw),
+                patch.object(prep, "OUTPUT_ROOT", output),
+            ):
                 prep.prepare_direction("unsw_to_cicids")
-                processor = joblib.load(root / "models/proposal_v2/unsw_to_cicids/preprocessor.joblib")
-                self.assertEqual(processor.named_steps["imputer"].statistics_[0], 2.0)
-                target_output = pq.read_table(output / "unsw_to_cicids/cicids_val/data.parquet")
+                processor = joblib.load(
+                    root / "models/proposal_v2/unsw_to_cicids/preprocessor.joblib"
+                )
+                self.assertIn(processor.medians[0], (1.0, 3.0))
+                self.assertEqual(processor.data_revision, "spark_data_v1")
+                target_output = pq.read_table(output / "unsw_to_cicids/cicids_val")
                 self.assertEqual(target_output.num_rows, 2)
-                self.assertEqual(target_output.schema.field("features").type.list_size, 5)
+                self.assertEqual(
+                    [len(row) for row in target_output["features"].to_pylist()], [5, 5]
+                )
                 self.assertEqual(target_output["label"].to_pylist(), [0, 1])
-                self.assertTrue(np.isfinite(target_output["features"].combine_chunks().values.to_numpy()).all())
+                self.assertTrue(
+                    np.isfinite(
+                        target_output["features"].combine_chunks().values.to_numpy()
+                    ).all()
+                )
                 with self.assertRaises(FileExistsError):
                     prep.prepare_direction("unsw_to_cicids")
 

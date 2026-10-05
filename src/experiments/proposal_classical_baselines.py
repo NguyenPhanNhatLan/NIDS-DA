@@ -12,6 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from evaluation.baseline import compute_metrics, select_f1_threshold
 from experiments.proposal_source_only import domains, sha256
 from features.common_features import COMMON_FEATURES
+from features.parquet_vectors import vector_matrix
 from training.proposal_data import split_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,15 +27,14 @@ def read_batches(directory, batch_size=8192):
         raise FileNotFoundError(f"No Parquet files in {directory}")
     for file in files:
         with pq.ParquetFile(file) as parquet:
-            for batch in parquet.iter_batches(batch_size=batch_size, columns=["features", "label"]):
+            for batch in parquet.iter_batches(
+                batch_size=batch_size, columns=["features", "label"]
+            ):
                 vectors = batch.column("features")
-                if not pa.types.is_fixed_size_list(vectors.type) or vectors.type.list_size != INPUT_DIM:
-                    raise ValueError(f"Expected {INPUT_DIM} features in {file}")
-                if vectors.null_count or vectors.values.null_count:
-                    raise ValueError(f"Null features in {file}")
-                x = np.asarray(vectors.values.to_numpy(zero_copy_only=False), dtype=np.float32)
-                x = x.reshape(len(batch), INPUT_DIM)
-                y = np.asarray(batch.column("label").to_numpy(zero_copy_only=False), dtype=np.int64)
+                x = vector_matrix(vectors, file)
+                y = np.asarray(
+                    batch.column("label").to_numpy(zero_copy_only=False), dtype=np.int64
+                )
                 if not np.isfinite(x).all() or not np.isin(y, [0, 1]).all():
                     raise ValueError(f"Invalid features or labels in {file}")
                 yield x, y
@@ -47,9 +47,11 @@ def sample_source_train(directory, max_rows, seed):
     if not files:
         raise FileNotFoundError(f"No Parquet files in {directory}")
     total_rows = sum(pq.read_metadata(file).num_rows for file in files)
-    chosen = np.sort(np.random.default_rng(seed).choice(
-        total_rows, size=min(total_rows, max_rows), replace=False
-    ))
+    chosen = np.sort(
+        np.random.default_rng(seed).choice(
+            total_rows, size=min(total_rows, max_rows), replace=False
+        )
+    )
     selected_x, selected_y = [], []
     seen = 0
     for x, y in read_batches(directory):
@@ -71,18 +73,27 @@ def sample_source_train(directory, max_rows, seed):
 
 def build_model(method, seed, labels):
     if method == "logistic_regression":
-        return LogisticRegression(max_iter=300, class_weight="balanced", random_state=seed)
+        return LogisticRegression(
+            max_iter=300, class_weight="balanced", random_state=seed
+        )
     if method == "xgboost":
         try:
             from xgboost import XGBClassifier
         except ImportError as error:
-            raise ImportError("XGBoost baseline requires: .venv/bin/pip install '.[classical]'") from error
+            raise ImportError(
+                "XGBoost baseline requires: .venv/bin/pip install '.[classical]'"
+            ) from error
         negatives = int((labels == 0).sum())
         positives = int((labels == 1).sum())
         return XGBClassifier(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
-            tree_method="hist", n_jobs=4, random_state=seed,
-            scale_pos_weight=negatives / positives, eval_metric="logloss",
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            tree_method="hist",
+            n_jobs=4,
+            random_state=seed,
+            scale_pos_weight=negatives / positives,
+            eval_metric="logloss",
         )
     raise ValueError(f"Unknown classical method: {method}")
 
@@ -110,7 +121,9 @@ def run(direction, method, seed=42, max_train_rows=250000):
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
 
-    x_train, y_train, total_rows = sample_source_train(source_train, max_train_rows, seed)
+    x_train, y_train, total_rows = sample_source_train(
+        source_train, max_train_rows, seed
+    )
     model = build_model(method, seed, y_train)
     model.fit(x_train, y_train)
     source_y, source_scores = score_split(model, source_val)
@@ -148,8 +161,12 @@ def run(direction, method, seed=42, max_train_rows=250000):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"])
-    parser.add_argument("--method", required=True, choices=["logistic_regression", "xgboost"])
+    parser.add_argument(
+        "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
+    )
+    parser.add_argument(
+        "--method", required=True, choices=["logistic_regression", "xgboost"]
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-rows", type=int, default=250000)
     args = parser.parse_args()

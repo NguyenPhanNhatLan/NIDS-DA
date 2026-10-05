@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from features.common_features import COMMON_FEATURES
-from models.proposal_pipeline import proposal_processor
+from features.parquet_vectors import vector_matrix
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_ROOT = ROOT / "data/features/common_raw2"
@@ -41,19 +41,7 @@ def read_batches(directory, include_labels=True):
         with pq.ParquetFile(path) as parquet:
             for batch in parquet.iter_batches(batch_size=BATCH_ROWS, columns=columns):
                 vectors = batch.column("features")
-                if (
-                    not pa.types.is_fixed_size_list(vectors.type)
-                    or vectors.type.list_size != INPUT_DIM
-                ):
-                    raise ValueError(
-                        f"Expected fixed {INPUT_DIM}-feature vectors in {path}"
-                    )
-                if vectors.null_count or vectors.values.null_count:
-                    raise ValueError(f"Null feature vectors in {path}")
-                values = vectors.values.to_numpy(zero_copy_only=False)
-                features = np.asarray(values, dtype=np.float32).reshape(
-                    len(batch), INPUT_DIM
-                )
+                features = vector_matrix(vectors, path, allow_nonfinite=True)
                 if include_labels:
                     labels = np.asarray(
                         batch.column("label").to_numpy(zero_copy_only=False),
@@ -64,20 +52,18 @@ def read_batches(directory, include_labels=True):
                     yield features
 
 
-def fit_source_processor(source_train_path):
-    files = parquet_files(source_train_path)
-    total_rows = sum(pq.read_metadata(path).num_rows for path in files)
-    source_train = np.empty((total_rows, INPUT_DIM), dtype=np.float32)
-    offset = 0
-    for batch in read_batches(source_train_path, include_labels=False):
-        end = offset + len(batch)
-        source_train[offset:end] = batch
-        offset = end
-    if offset != total_rows:
-        raise RuntimeError("Source train row count changed while reading")
-    processor = proposal_processor()
-    processor.fit(source_train)
-    return processor
+def fit_source_processor(source_train_path, spark=None, relative_error=0.001):
+    """Fit distributed quantile summaries; no source matrix on the driver."""
+    from bigdata.preprocess import fit_source_processor as spark_fit
+    from spark_session import get_spark
+
+    owned = spark is None
+    spark = spark or get_spark()
+    try:
+        return spark_fit(spark.read.parquet(str(source_train_path)), relative_error)
+    finally:
+        if owned:
+            spark.stop()
 
 
 def write_split(source_path, destination, processor):
@@ -108,15 +94,31 @@ def write_split(source_path, destination, processor):
     return rows
 
 
-def prepare_direction(direction):
+def prepare_direction(
+    direction,
+    spark=None,
+    raw_root=None,
+    output_root=None,
+    model_root=None,
+    relative_error=0.001,
+):
+    """Spark fits on source train and transforms every split in executor partitions."""
+    from bigdata.preprocess import write_prepared
+    from spark_session import get_spark
+
     source, target = direction_domains(direction)
+    raw_root = Path(raw_root) if raw_root is not None else RAW_ROOT
+    output_root = Path(output_root) if output_root is not None else OUTPUT_ROOT
+    model_root = (
+        Path(model_root) if model_root is not None else ROOT / "models/proposal_v2"
+    )
     datasets = [
         (domain, split)
         for domain in (source, target)
         for split in ("train", "val", "test")
     ]
-    preprocessor_path = ROOT / "models/proposal_v2" / direction / "preprocessor.joblib"
-    output_base = OUTPUT_ROOT / direction
+    preprocessor_path = model_root / direction / "preprocessor.joblib"
+    output_base = output_root / direction
     for path in [
         preprocessor_path,
         *(output_base / f"{domain}_{split}" for domain, split in datasets),
@@ -125,15 +127,21 @@ def prepare_direction(direction):
             raise FileExistsError(
                 f"Proposal preprocessing output already exists: {path}"
             )
-    processor = fit_source_processor(RAW_ROOT / f"{source}_train")
-    preprocessor_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(processor, preprocessor_path)
-    print(f"Saved processor: {preprocessor_path}")
-    for domain, split in datasets:
-        rows = write_split(
-            RAW_ROOT / f"{domain}_{split}", output_base / f"{domain}_{split}", processor
+    owned = spark is None
+    spark = spark or get_spark()
+    try:
+        processor = fit_source_processor(
+            raw_root / f"{source}_train", spark, relative_error
         )
-        print(f"{direction} | {domain}_{split} | rows={rows} | features={INPUT_DIM}")
+        preprocessor_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(processor, preprocessor_path)
+        for domain, split in datasets:
+            frame = spark.read.parquet(str(raw_root / f"{domain}_{split}"))
+            write_prepared(frame, output_base / f"{domain}_{split}", processor)
+        return processor
+    finally:
+        if owned:
+            spark.stop()
 
 
 def main():
@@ -141,8 +149,18 @@ def main():
     parser.add_argument(
         "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
     )
+    parser.add_argument("--raw-root", type=Path, default=RAW_ROOT)
+    parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
+    parser.add_argument("--model-root", type=Path, default=ROOT / "models/proposal_v2")
+    parser.add_argument("--relative-error", type=float, default=0.001)
     args = parser.parse_args()
-    prepare_direction(args.direction)
+    prepare_direction(
+        args.direction,
+        raw_root=args.raw_root,
+        output_root=args.output_root,
+        model_root=args.model_root,
+        relative_error=args.relative_error,
+    )
 
 
 if __name__ == "__main__":
