@@ -1,4 +1,4 @@
-"""Three-scale marginal MK-MMD for the proposal_v1 shared latent space."""
+"""Three-scale marginal MK-MMD for the proposal_v2 shared latent space."""
 import argparse
 from pathlib import Path
 
@@ -7,7 +7,7 @@ import torch
 from training.adaptation import estimate_bandwidth_squared
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = ROOT / "configs/proposal_mkmmd_v1.json"
+DEFAULT_CONFIG = ROOT / "configs/proposal_mkmmd_v2.json"
 
 
 def multi_kernel_mmd_loss(source_z, target_z, scales):

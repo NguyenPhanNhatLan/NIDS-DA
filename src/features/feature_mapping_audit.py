@@ -4,9 +4,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 
-UNSW_DICTIONARY = ROOT / "docs" / "feature_dictionary_unsw.csv"
+UNSW_DICTIONARY = ROOT / "docs" / "data_dictionary" / "feature_dictionary_unsw.csv"
 
-CICIDS_DICTIONARY = ROOT / "docs" / "feature_dictionary_cicids.csv"
+CICIDS_DICTIONARY = ROOT / "docs" / "data_dictionary" / "feature_dictionary_cicids.csv"
 
 CANDIDATES = ROOT / "docs" / "feature_candidates_v2.csv"
 

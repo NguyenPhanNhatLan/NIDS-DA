@@ -57,3 +57,8 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Archived generated artifacts remain local; historical source stays versioned.
+/legacy/data/
+/legacy/models/
+/legacy/results/

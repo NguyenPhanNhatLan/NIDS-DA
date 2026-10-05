@@ -1,4 +1,4 @@
-"""Auxiliary source-only LR/XGBoost baselines on prepared proposal_v1 features."""
+"""Auxiliary source-only LR/XGBoost baselines on prepared proposal_v2 features."""
 
 import argparse
 import json
@@ -15,8 +15,8 @@ from features.common_features import COMMON_FEATURES
 from training.proposal_data import split_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
-RESULT_ROOT = ROOT / "results/proposal_v1/classical_target_val"
-COMMON_CONFIG = ROOT / "configs/common_features_v1.json"
+RESULT_ROOT = ROOT / "results/proposal_v2/classical_target_val"
+COMMON_CONFIG = ROOT / "configs/common_features_v2.json"
 INPUT_DIM = len(COMMON_FEATURES)
 
 
@@ -99,11 +99,11 @@ def run(direction, method, seed=42, max_train_rows=250000):
     source, target = domains(direction)
     if method not in {"logistic_regression", "xgboost"}:
         raise ValueError(f"Unknown classical method: {method}")
-    base = ROOT / "data/features/proposal_v1" / direction
+    base = ROOT / "data/features/proposal_v2" / direction
     source_train = base / f"{source}_train"
     source_val = base / f"{source}_val"
     target_val = base / f"{target}_val"
-    preprocessor = ROOT / "models/proposal_v1" / direction / "preprocessor.joblib"
+    preprocessor = ROOT / "models/proposal_v2" / direction / "preprocessor.joblib"
     if not preprocessor.is_file():
         raise FileNotFoundError(f"Missing source-fitted preprocessor: {preprocessor}")
     output = RESULT_ROOT / method / direction / f"seed{seed}.json"
@@ -117,7 +117,7 @@ def run(direction, method, seed=42, max_train_rows=250000):
     threshold = select_f1_threshold(source_y, source_scores)
     target_y, target_scores = score_split(model, target_val)
     result = {
-        "protocol": "proposal_classical_target_val_v1",
+        "protocol": "proposal_v2",
         "method": method,
         "direction": direction,
         "seed": seed,

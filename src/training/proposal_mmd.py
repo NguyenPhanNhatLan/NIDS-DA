@@ -26,7 +26,7 @@ from training.proposal_mkmmd import multi_kernel_mmd_loss
 
 ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_CONFIG = ROOT / "configs" / "proposal_mmd_v1.json"
+DEFAULT_CONFIG = ROOT / "configs" / "proposal_mmd_v2.json"
 
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
@@ -92,6 +92,9 @@ def load_config(path):
         confidence = config["mmd"].get("target_pseudo_label_confidence")
         if confidence is None or not 0 <= confidence <= 1:
             raise ValueError("Class-aware MMD requires pseudo-label confidence in [0, 1]")
+
+    if config.get("protocol") != "proposal_v2" or config.get("common_feature_config") != "configs/common_features_v2.json":
+        raise ValueError("Only proposal_v2 with common_features_v2.json is supported")
 
     return config
 

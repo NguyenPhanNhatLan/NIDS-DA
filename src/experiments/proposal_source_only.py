@@ -1,4 +1,4 @@
-"""Source-only MLP baseline on the fixed 10-feature proposal_v1 data."""
+"""Source-only MLP baseline on the fixed 5-feature proposal_v2 data."""
 
 import argparse
 import hashlib
@@ -94,7 +94,7 @@ def run(direction, seed=42):
     result_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "protocol": "proposal_source_only_target_val_v2",
+            "protocol": "proposal_v2",
             "direction": direction,
             "seed": seed,
             "input_dim": INPUT_DIM,

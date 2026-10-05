@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--dataset", required=True, choices=["unsw", "cicids"])
     args = parser.parse_args()
 
-    source_path = PROJECT_DIR / "data" / "processed" / f"clean_{args.dataset}.parquet"
+    source_path = PROJECT_DIR / "data" / "processed" / f"{args.dataset}_common5.parquet"
     split_dir = PROJECT_DIR / "data" / "splits_v2"
     paths = [split_dir / f"{args.dataset}_{name}" for name in ("train", "val", "test")]
     existing = [path for path in paths if path.exists()]
@@ -69,8 +69,6 @@ def main():
     spark = get_spark()
     try:
         data = spark.read.parquet(str(source_path))
-        if args.dataset == "cicids":
-            data = data.drop("label").withColumnRenamed("binary_label", "label")
 
         if "label" not in data.columns:
             raise ValueError("Dữ liệu thiếu cột label.")

@@ -1,4 +1,4 @@
-"""Small deterministic Parquet batch stream for proposal_v1 training."""
+"""Small deterministic Parquet batch stream for proposal_v2 training."""
 import hashlib
 from pathlib import Path
 

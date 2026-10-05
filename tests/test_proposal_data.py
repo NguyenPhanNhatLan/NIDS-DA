@@ -15,7 +15,7 @@ from training.proposal_data import iter_parquet_batches, split_sha256
 def write_vectors(directory, values, labels=None):
     directory.mkdir(parents=True)
     matrix = np.asarray(values, dtype=np.float32)
-    vectors = pa.FixedSizeListArray.from_arrays(pa.array(matrix.ravel()), 10)
+    vectors = pa.FixedSizeListArray.from_arrays(pa.array(matrix.ravel()), 5)
     columns = {"features": vectors}
     if labels is not None:
         columns["label"] = pa.array(labels, type=pa.int64())
@@ -27,7 +27,7 @@ class ProposalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "source"
             target = Path(temp) / "target"
-            rows = np.arange(27 * 10, dtype=np.float32).reshape(27, 10)
+            rows = np.arange(27 * 5, dtype=np.float32).reshape(27, 5)
             labels = np.arange(27) % 2
             write_vectors(source, rows, labels)
             write_vectors(target, rows)
@@ -51,10 +51,10 @@ class ProposalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             raw = root / "common_raw"
-            output = root / "proposal_v1"
-            source = np.zeros((3, 10), dtype=np.float32)
+            output = root / "proposal_v2"
+            source = np.zeros((3, 5), dtype=np.float32)
             source[:, 0] = [1, 3, np.nan]
-            target = np.zeros((2, 10), dtype=np.float32)
+            target = np.zeros((2, 5), dtype=np.float32)
             target[:, 0] = [1000, np.nan]
             for domain, values in (("unsw", source), ("cicids", target)):
                 for split in ("train", "val", "test"):
@@ -62,11 +62,11 @@ class ProposalDataTests(unittest.TestCase):
             with patch.object(prep, "ROOT", root), patch.object(prep, "RAW_ROOT", raw), \
                  patch.object(prep, "OUTPUT_ROOT", output):
                 prep.prepare_direction("unsw_to_cicids")
-                processor = joblib.load(root / "models/proposal_v1/unsw_to_cicids/preprocessor.joblib")
+                processor = joblib.load(root / "models/proposal_v2/unsw_to_cicids/preprocessor.joblib")
                 self.assertEqual(processor.named_steps["imputer"].statistics_[0], 2.0)
                 target_output = pq.read_table(output / "unsw_to_cicids/cicids_val/data.parquet")
                 self.assertEqual(target_output.num_rows, 2)
-                self.assertEqual(target_output.schema.field("features").type.list_size, 10)
+                self.assertEqual(target_output.schema.field("features").type.list_size, 5)
                 self.assertEqual(target_output["label"].to_pylist(), [0, 1])
                 self.assertTrue(np.isfinite(target_output["features"].combine_chunks().values.to_numpy()).all())
                 with self.assertRaises(FileExistsError):

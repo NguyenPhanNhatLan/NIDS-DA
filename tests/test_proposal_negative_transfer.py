@@ -20,7 +20,7 @@ from models.baseline import BaselineMLP
 class NegativeTransferDiagnosticTests(unittest.TestCase):
     def test_mmd_prior_and_threshold_are_finite(self):
         rng = np.random.default_rng(42)
-        source = rng.normal(size=(20, 4)).astype(np.float32)
+        source = rng.normal(size=(20, 5)).astype(np.float32)
         target = (source + 0.2).astype(np.float32)
         labels = np.array([0] * 10 + [1] * 10)
         mmd = repeated_mmd(source, target, sample_size=8, repeats=3, seed=7)
@@ -63,9 +63,9 @@ class NegativeTransferDiagnosticTests(unittest.TestCase):
         self.assertNotIn("weak_alignment", aligned)
 
     def test_gradient_uses_dropout_training_with_bn_frozen(self):
-        model = BaselineMLP(10)
+        model = BaselineMLP(5)
         model.eval()
-        x = torch.randn(8, 10)
+        x = torch.randn(8, 5)
         y = torch.tensor([0, 1] * 4)
         original_mmd = diagnostic_module.mmd_loss
 
@@ -81,7 +81,7 @@ class NegativeTransferDiagnosticTests(unittest.TestCase):
 
         with patch.object(diagnostic_module, "ParquetBatchStream", side_effect=fake_stream), \
              patch.object(diagnostic_module, "mmd_loss", side_effect=checked_mmd):
-            result = gradient_cosine(model, "source", "target", 10, [4, 4], batches=1, batch_size=8)
+            result = gradient_cosine(model, "source", "target", 5, [4, 4], batches=1, batch_size=8)
         self.assertEqual(result["batches"], 1)
         self.assertFalse(model.training)
         self.assertFalse(model.dropout.training)
@@ -89,7 +89,7 @@ class NegativeTransferDiagnosticTests(unittest.TestCase):
 
     def test_class_mmd_uses_one_shared_bandwidth(self):
         rng = np.random.default_rng(7)
-        x = rng.normal(size=(20, 4)).astype(np.float32)
+        x = rng.normal(size=(20, 5)).astype(np.float32)
         y = np.array([0] * 10 + [1] * 10)
         used = []
         original_kernel = diagnostic_module.rbf_kernel

@@ -26,20 +26,20 @@ FEATURE_ROOT = (
     ROOT
     / "data"
     / "features"
-    / "proposal_v1"
+    / "proposal_v2"
 )
 
 RESULT_ROOT = (
     ROOT
     / "results"
-    / "proposal_v1"
+    / "proposal_v2"
     / "domain_shift"
 )
 
 COMMON_CONFIG = (
     ROOT
     / "configs"
-    / "common_features_v1.json"
+    / "common_features_v2.json"
 )
 
 
@@ -647,7 +647,7 @@ def run(
     preprocessor_path = (
         ROOT
         / "models"
-        / "proposal_v1"
+        / "proposal_v2"
         / direction
         / "preprocessor.joblib"
     )
@@ -660,7 +660,7 @@ def run(
 
     result = {
         "protocol":
-            "proposal_suite_v1",
+            "proposal_v2",
 
         "analysis":
             "pre_adaptation_domain_shift",
@@ -685,7 +685,7 @@ def run(
 
         "input_space":
             (
-                "10D common feature space "
+                "5D common feature space "
                 "after source-train fitted "
                 "median -> signed_log1p "
                 "-> RobustScaler"

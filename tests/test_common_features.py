@@ -13,7 +13,7 @@ from features.common_features import (
 class CommonFeatureTests(unittest.TestCase):
     def test_order_and_missing_values_remain_unfitted(self):
         config = load_common_feature_config()
-        self.assertEqual(len(COMMON_FEATURES), 10)
+        self.assertEqual(len(COMMON_FEATURES), 5)
         self.assertEqual([item["canonical_name"] for item in config], list(COMMON_FEATURES))
         for domain in ("unsw", "cicids"):
             frame = pd.DataFrame({item[domain]: [1.0, np.inf, 3.0] for item in config})

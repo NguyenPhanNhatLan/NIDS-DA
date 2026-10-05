@@ -1,4 +1,4 @@
-"""Post-training, development-only negative-transfer diagnostics for proposal_v1."""
+"""Post-training, development-only negative-transfer diagnostics for proposal_v2."""
 from __future__ import annotations
 
 import argparse
@@ -21,10 +21,10 @@ from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import freeze_bn_stats, output_paths
 
 ROOT = Path(__file__).resolve().parents[2]
-FEATURE_ROOT = ROOT / "data/features/proposal_v1"
-SOURCE_ROOT = ROOT / "models/proposal_v1/source_only_target_val"
-SOURCE_RESULT_ROOT = ROOT / "results/proposal_v1/source_only_target_val"
-OUTPUT_ROOT = ROOT / "results/proposal_v1/diagnostics_target_val"
+FEATURE_ROOT = ROOT / "data/features/proposal_v2"
+SOURCE_ROOT = ROOT / "models/proposal_v2/source_only_target_val"
+SOURCE_RESULT_ROOT = ROOT / "results/proposal_v2/source_only_target_val"
+OUTPUT_ROOT = ROOT / "results/proposal_v2/diagnostics_target_val"
 EPS = 1e-12
 RULES = {
     "minimum_ap_drop": 0.01,
@@ -74,8 +74,8 @@ def load_models(direction, seed, config_path):
             raise ValueError("Experiment direction, seed, or feature schema mismatch")
     if adapted_cp["source_checkpoint_sha256"] != sha256(source_path):
         raise ValueError("Adapted checkpoint does not derive from current source checkpoint")
-    common_hash = sha256(ROOT / "configs/common_features_v1.json")
-    preprocessor_hash = sha256(ROOT / "models/proposal_v1" / direction / "preprocessor.joblib")
+    common_hash = sha256(ROOT / "configs/common_features_v2.json")
+    preprocessor_hash = sha256(ROOT / "models/proposal_v2" / direction / "preprocessor.joblib")
     for artifact in (source_cp, adapted_cp, source_result, adapted_result):
         if artifact["common_feature_config_sha256"] != common_hash or artifact["preprocessor_sha256"] != preprocessor_hash:
             raise ValueError("Experiment artifact preprocessing provenance mismatch")
@@ -332,11 +332,11 @@ def diagnose(target_delta, source_delta, marginal, class_alignment, gradient, do
     return causes
 
 
-def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
+def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v2.json",
         sample_rows=10000, mmd_sample=256, mmd_repeats=20, gradient_batches=20, cv_folds=5):
     config_path = Path(config_path)
     source, target = domains(direction)
-    default_config = ROOT / "configs/proposal_mmd_v1.json"
+    default_config = ROOT / "configs/proposal_mmd_v2.json"
     filename = f"seed{seed}.json" if config_path.resolve() == default_config.resolve() else f"seed{seed}_{config_path.stem}.json"
     output = OUTPUT_ROOT / direction / filename
     if output.exists():
@@ -404,22 +404,6 @@ def run(direction, seed=42, config_path=ROOT / "configs/proposal_mmd_v1.json",
     mmd_active = float(adapted_result["lambda_mmd"]) > 0
     causes = diagnose(target_delta, source_delta, marginal, class_alignment, gradient, domain, prior, threshold, mmd_active, bn)
     ce_control = None
-    if mmd_active:
-        control_path = output_paths(direction, seed, ROOT / "configs/proposal_mmd_lambda0.json")[1]
-        if control_path.is_file():
-            control = json.loads(control_path.read_text())
-            if (control["direction"] != direction or control["seed"] != seed
-                    or control["target_development_split"] != f"{target}_val"
-                    or control["source_checkpoint_sha256"] != paths["source_checkpoint_sha256"]
-                    or control["config_sha256"] != sha256(ROOT / "configs/proposal_mmd_lambda0.json")
-                    or control["preprocessor_sha256"] != source_result["preprocessor_sha256"]):
-                raise ValueError(f"CE-only control provenance mismatch: {control_path}")
-            ce_ap = control["cross_domain"]["pr_auc"]
-            ce_control = {"result": str(control_path), "target_development_ap": ce_ap,
-                          "delta_vs_source_only_ap": ce_ap - source_result["target_development"]["pr_auc"],
-                          "mmd_minus_ce_only_ap": adapted_result["cross_domain"]["pr_auc"] - ce_ap}
-            if ce_control["delta_vs_source_only_ap"] < -RULES["minimum_ap_drop"]:
-                causes.append("continued_source_ce_associated_with_target_drop")
     result = {
         "direction": direction, "seed": seed, "config": str(config_path), "config_sha256": sha256(config_path),
         "artifacts": paths,
@@ -508,7 +492,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"])
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--config", type=Path, default=ROOT / "configs/proposal_mmd_v1.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "configs/proposal_mmd_v2.json")
     parser.add_argument("--sample-rows", type=int, default=10000)
     parser.add_argument("--mmd-sample", type=int, default=256)
     parser.add_argument("--mmd-repeats", type=int, default=20)

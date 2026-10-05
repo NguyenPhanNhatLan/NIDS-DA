@@ -1,4 +1,4 @@
-"""Fit on source train, then stream all proposal_v1 splits in fixed feature order."""
+"""Fit on source train, then stream all proposal_v2 splits in fixed feature order."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from models.proposal_pipeline import proposal_processor
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_ROOT = ROOT / "data/features/common_raw2"
-OUTPUT_ROOT = ROOT / "data/features/proposal_v22"
+OUTPUT_ROOT = ROOT / "data/features/proposal_v2"
 BATCH_ROWS = 65536
 INPUT_DIM = len(COMMON_FEATURES)
 

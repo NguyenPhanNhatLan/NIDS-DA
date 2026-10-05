@@ -1,4 +1,4 @@
-"""Evaluate frozen proposal_v1 MLP checkpoints once on the held-out target test split."""
+"""Evaluate frozen proposal_v2 MLP checkpoints once on the held-out target test split."""
 
 import argparse
 import json
@@ -15,19 +15,19 @@ from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import output_paths, sha256
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = ROOT / "results/proposal_v1/final_target_test"
+OUTPUT_ROOT = ROOT / "results/proposal_v2/final_target_test"
 CONFIGS = {
-    "marginal_mmd": ROOT / "configs/proposal_mmd_v1.json",
-    "mk_mmd": ROOT / "configs/proposal_mkmmd_v1.json",
-    "class_aware_mmd": ROOT / "configs/proposal_class_aware_v1.json",
+    "marginal_mmd": ROOT / "configs/proposal_mmd_v2.json",
+    "mk_mmd": ROOT / "configs/proposal_mkmmd_v2.json",
+    "class_aware_mmd": ROOT / "configs/proposal_class_aware_v2.json",
 }
 
 
 def paths(method, direction, seed):
     if method == "source_only":
         return (
-            ROOT / "models/proposal_v1/source_only_target_val" / direction / f"seed{seed}.pt",
-            ROOT / "results/proposal_v1/source_only_target_val" / direction / f"seed{seed}.json",
+            ROOT / "models/proposal_v2/source_only_target_val" / direction / f"seed{seed}.pt",
+            ROOT / "results/proposal_v2/source_only_target_val" / direction / f"seed{seed}.json",
         )
     if method not in CONFIGS:
         raise ValueError(f"Unknown proposal method: {method}")
@@ -62,15 +62,15 @@ def run(direction, method, seed=42):
     if development["checkpoint"] != str(checkpoint_path):
         raise ValueError("Development result points to another checkpoint")
 
-    base = ROOT / "data/features/proposal_v1" / direction
+    base = ROOT / "data/features/proposal_v2" / direction
     prepared = {
         "source_train": split_sha256(base / f"{source}_train"),
         "source_val": split_sha256(base / f"{source}_val"),
         "target_train": split_sha256(base / f"{target}_train"),
         "target_val": split_sha256(base / f"{target}_val"),
     }
-    common_hash = sha256(ROOT / "configs/common_features_v1.json")
-    processor_hash = sha256(ROOT / "models/proposal_v1" / direction / "preprocessor.joblib")
+    common_hash = sha256(ROOT / "configs/common_features_v2.json")
+    processor_hash = sha256(ROOT / "models/proposal_v2" / direction / "preprocessor.joblib")
     for artifact in (checkpoint, development):
         if (artifact["prepared_split_sha256"] != prepared
                 or artifact["common_feature_config_sha256"] != common_hash
@@ -118,12 +118,13 @@ def run(direction, method, seed=42):
         model, ParquetBatchStream(test_path, 1024, False, seed, True)
     )
     result = {
-        "protocol": "proposal_v1_final_target_test",
+        "protocol": "proposal_v2",
         "phase": "final_test",
         "direction": direction,
         "method": method,
         "seed": seed,
         "features": list(COMMON_FEATURES),
+        "feature_count": len(COMMON_FEATURES),
         "target_test_split": f"{target}_test",
         "target_test_sha256": test_hash,
         "checkpoint": str(checkpoint_path),

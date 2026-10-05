@@ -20,7 +20,8 @@ class ProposalAggregateTests(unittest.TestCase):
                                "tn": 8, "fp": 1, "fn": 1, "tp": 2}
                     result = {"direction": direction, "seed": seed,
                               "target_development_split": "cicids_val",
-                              "common_feature_config_sha256": "schema",
+                              "common_feature_config_sha256": "config",
+                              "features": list(proposal_aggregate.COMMON_FEATURES), "feature_count": 5,
                               "preprocessor_sha256": "processor",
                               "prepared_split_sha256": {"train": "data"}}
                     if method == "source_only":
@@ -38,7 +39,21 @@ class ProposalAggregateTests(unittest.TestCase):
             summary = next(row for row in output["summary"] if row["method"] == "marginal_mmd")
             self.assertAlmostEqual(summary["metrics"]["pr_auc"]["mean"], 0.30)
             self.assertAlmostEqual(summary["metrics"]["adaptation_gain_pr_auc"]["mean"], 0.05)
+            self.assertEqual([row["seed"] for row in summary["paired_delta_ap"]], [42, 43])
+            self.assertAlmostEqual(summary["metrics"]["adaptation_gain_pr_auc"]["ci95"][0], 0.05)
+            self.assertEqual(summary["metrics"]["pr_auc"]["n"], 2)
             self.assertEqual(summary["confusion_matrix_sum"], {"tn": 16, "fp": 2, "fn": 2, "tp": 4})
+
+    def test_ci_uses_paired_seed_differences_and_sample_std(self):
+        # Five paired deltas: mean .02, sample std sqrt(.00025).
+        result = proposal_aggregate.seed_statistics([0, .01, .02, .03, .04])
+        self.assertAlmostEqual(result["mean"], .02)
+        self.assertAlmostEqual(result["std"], .015811388300841896)
+        self.assertAlmostEqual(result["ci95"][0], .000367568385224389, places=8)
+        self.assertAlmostEqual(result["ci95"][1], .03963243161477561, places=8)
+        self.assertIsNone(proposal_aggregate.seed_statistics([.02])["ci95"])
+        with self.assertRaises(ValueError):
+            proposal_aggregate.aggregate(seeds=(42, 42))
 
 
 if __name__ == "__main__":

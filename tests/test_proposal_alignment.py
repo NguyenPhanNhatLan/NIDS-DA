@@ -19,8 +19,8 @@ class ProposalAlignmentTests(unittest.TestCase):
     def test_uda_training_reads_target_features_without_label_column(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            values = np.random.default_rng(2).normal(size=(8, 10)).astype(np.float32)
-            vectors = pa.FixedSizeListArray.from_arrays(pa.array(values.ravel()), 10)
+            values = np.random.default_rng(2).normal(size=(8, 5)).astype(np.float32)
+            vectors = pa.FixedSizeListArray.from_arrays(pa.array(values.ravel()), 5)
             source = root / "source"
             target = root / "target"
             source.mkdir(); target.mkdir()
@@ -34,7 +34,7 @@ class ProposalAlignmentTests(unittest.TestCase):
                                    "weight_decay": 0.0, "min_delta": 0.0001, "patience": 2}}
             with patch.object(proposal_mmd, "evaluate_ap", side_effect=[0.5, 0.6]):
                 _, epoch, _, _ = proposal_mmd.train_mmd(
-                    BaselineMLP(10), [4, 4], source_stream, target_stream, [], config)
+                    BaselineMLP(5), [4, 4], source_stream, target_stream, [], config)
             self.assertEqual(epoch, 1)
 
     def test_multikernel_alignment_has_encoder_gradient(self):
@@ -66,13 +66,13 @@ class ProposalAlignmentTests(unittest.TestCase):
         self.assertEqual(pseudo_label_counts(logits, 0.8), (2, 3, [1, 1]))
 
     def test_train_dispatches_mk_and_class_aware(self):
-        x = torch.randn(8, 10)
+        x = torch.randn(8, 5)
         y = torch.tensor([0, 1] * 4)
         for method, function_name, mmd_config in (
             ("mk_mmd", "multi_kernel_mmd_loss", {"scales": [0.5, 1.0, 2.0]}),
             ("class_aware_mmd", "class_aware_mmd_loss", {"target_pseudo_label_confidence": 0.8}),
         ):
-            model = BaselineMLP(10)
+            model = BaselineMLP(5)
             config = {"method": method, "alpha_ce": 1.0, "lambda_mmd": 0.01,
                       "mmd": mmd_config, "training": {"epochs": 1, "learning_rate": 0.001,
                       "weight_decay": 0.0, "min_delta": 0.0001, "patience": 2}}

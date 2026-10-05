@@ -1,4 +1,4 @@
-"""Source-fitted preprocessing for the 10 proposal features."""
+"""Source-fitted preprocessing for the 5 proposal features."""
 import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline

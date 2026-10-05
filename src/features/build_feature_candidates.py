@@ -4,8 +4,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 
-UNSW_PATH = ROOT / "docs" / "feature_dictionary_unsw.csv"
-CICIDS_PATH = ROOT / "docs" / "feature_dictionary_cicids.csv"
+UNSW_PATH = ROOT / "docs" / "data_dictionary" / "feature_dictionary_unsw.csv"
+CICIDS_PATH = ROOT / "docs" / "data_dictionary" / "feature_dictionary_cicids.csv"
 
 OUTPUT_PATH = ROOT / "docs" / "feature_candidates_v2.csv"
 

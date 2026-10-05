@@ -14,16 +14,26 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
     def test_config_rejects_target_test_development(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "mmd.json"
-            path.write_text(json.dumps({"feature_count": 10, "lambda_mmd": 0.01, "alpha_ce": 1.0,
+            path.write_text(json.dumps({"feature_count": 5, "lambda_mmd": 0.01, "alpha_ce": 1.0,
                                         "development_split": "target_test"}))
             with self.assertRaisesRegex(ValueError, "development_split=target_val"):
+                proposal_mmd.load_config(path)
+
+    def test_only_canonical_v2_config_is_accepted(self):
+        config = json.loads(proposal_mmd.DEFAULT_CONFIG.read_text())
+        self.assertEqual(proposal_mmd.load_config(proposal_mmd.DEFAULT_CONFIG)["protocol"], "proposal_v2")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "old.json"
+            config["protocol"] = "proposal_v1"
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, "Only proposal_v2"):
                 proposal_mmd.load_config(path)
 
     def test_stale_preprocessor_hash_fails_before_training(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             direction = "unsw_to_cicids"
-            preprocessor = root / "models/proposal_v1" / direction / "preprocessor.joblib"
+            preprocessor = root / "models/proposal_v2" / direction / "preprocessor.joblib"
             preprocessor.parent.mkdir(parents=True)
             preprocessor.write_bytes(b"current-preprocessor")
             source_cp_path = root / "source_models" / direction / "seed42.pt"
@@ -31,13 +41,13 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
             source_cp_path.parent.mkdir(parents=True)
             source_result_path.parent.mkdir(parents=True)
             source_result_path.write_text(json.dumps({
-                "direction": direction, "seed": 42, "feature_count": 10,
+                "direction": direction, "seed": 42, "feature_count": 5,
                 "features": list(proposal_mmd.COMMON_FEATURES),
                 "best_epoch": 1,
                 "target_development_split": "cicids_val",
             }))
             torch.save({
-                "direction": direction, "seed": 42, "input_dim": 10,
+                "direction": direction, "seed": 42, "input_dim": 5,
                 "features": list(proposal_mmd.COMMON_FEATURES), "best_epoch": 1,
                 "common_feature_config_sha256": "stale",
                 "preprocessor_sha256": "stale",
@@ -50,7 +60,7 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
                     proposal_mmd.run(direction, 42, proposal_mmd.DEFAULT_CONFIG)
 
     def test_epoch_zero_ap_must_match_source_checkpoint(self):
-        model = BaselineMLP(10)
+        model = BaselineMLP(5)
         config = {"lambda_mmd": 0.0, "alpha_ce": 1.0, "training": {
             "epochs": 1, "learning_rate": 0.001, "weight_decay": 0.0,
             "min_delta": 0.0001, "patience": 2,
@@ -61,11 +71,11 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
                                        expected_source_ap=0.8)
 
     def test_lambda_zero_is_ce_only_and_bn_stats_stay_frozen(self):
-        model = BaselineMLP(10)
+        model = BaselineMLP(5)
         initial_state = {key: value.clone() for key, value in model.state_dict().items()}
         before = [(m.running_mean.clone(), m.running_var.clone())
                   for m in model.modules() if isinstance(m, torch.nn.BatchNorm1d)]
-        x = torch.randn(4, 10)
+        x = torch.randn(4, 5)
         y = torch.tensor([0, 1, 0, 1])
         config = {"lambda_mmd": 0.0, "alpha_ce": 1.0, "training": {
             "epochs": 1, "learning_rate": 0.001, "weight_decay": 0.0,
@@ -92,8 +102,8 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
             self.assertTrue(torch.equal(var_before, var_after))
 
     def test_positive_lambda_calls_mmd_and_uses_separate_paths(self):
-        model = BaselineMLP(10)
-        x = torch.randn(4, 10)
+        model = BaselineMLP(5)
+        x = torch.randn(4, 5)
         y = torch.tensor([0, 1, 0, 1])
         config = {"lambda_mmd": 0.01, "alpha_ce": 1.0, "training": {
             "epochs": 1, "learning_rate": 0.001, "weight_decay": 0.0,
@@ -108,8 +118,8 @@ class ProposalMmdPretrainedTests(unittest.TestCase):
         self.assertEqual([row["epoch"] for row in history], [0, 1])
         self.assertAlmostEqual(history[1]["loss"],
                                history[1]["source_ce"] + 0.01 * history[1]["mmd2"], places=6)
-        zero_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mmd_lambda0.json")
-        main_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mmd_v1.json")
+        zero_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mkmmd_v2.json")
+        main_paths = proposal_mmd.output_paths("unsw_to_cicids", 42, "configs/proposal_mmd_v2.json")
         self.assertNotEqual(zero_paths, main_paths)
         self.assertTrue(all("target_val_epoch0_" in str(path) for path in zero_paths + main_paths))
 

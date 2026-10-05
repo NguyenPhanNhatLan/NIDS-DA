@@ -137,8 +137,8 @@ def _input_files(directory):
 
 
 def generate_raw_common_feature_datasets(
-    split_root=ROOT / "data/splits",
-    output_root=ROOT / "data/features/common_raw",
+    split_root=ROOT / "data/splits_v2",
+    output_root=ROOT / "data/features/common_raw2",
     config_path=DEFAULT_CONFIG,
 ):
     config = load_common_feature_config(config_path)
@@ -246,7 +246,7 @@ def generate_raw_common_feature_datasets(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--split-root", type=Path, default=ROOT / "data/splits")
+    parser.add_argument("--split-root", type=Path, default=ROOT / "data/splits_v2")
     parser.add_argument(
         "--output-root", type=Path, default=ROOT / "data/features/common_raw2"
     )
