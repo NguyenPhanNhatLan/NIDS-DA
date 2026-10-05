@@ -7,6 +7,25 @@ from bigdata.common import mapping, require_columns, write_parquet
 from spark_session import get_spark
 
 
+def collapse_forward_header_length(frame):
+    canonical, alias = "fwd_header_length", "fwd_header_length_1"
+    if alias not in frame.columns:
+        return frame
+    if canonical not in frame.columns:
+        return frame.withColumnRenamed(alias, canonical)
+
+    def value(name):
+        text = F.trim(F.col(name).cast("string"))
+        return F.when(text != "", text)
+
+    left, right = value(canonical), value(alias)
+    same = (left == right) | (left.cast("double") == right.cast("double"))
+    conflict = left.isNotNull() & right.isNotNull() & ~F.coalesce(same, F.lit(False))
+    if frame.filter(conflict).limit(1).count():
+        raise ValueError("Conflicting CICIDS fwd_header_length and fwd_header_length_1 values")
+    return frame.withColumn(canonical, F.coalesce(left, right)).drop(alias)
+
+
 def normalize_headers(frame, domain):
     required = {item[domain] for item in mapping(domain)} | {"label"}
     used, names = set(), []
@@ -25,6 +44,8 @@ def normalize_headers(frame, domain):
         names.append(name)
     normalized = frame.toDF(*names)
     require_columns(normalized, required)
+    if domain == "cicids":
+        normalized = collapse_forward_header_length(normalized)
     return normalized
 
 

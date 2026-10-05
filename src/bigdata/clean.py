@@ -1,5 +1,3 @@
-"""Validate labels, remove exact raw-row duplicates, and null invalid numerics."""
-
 from functools import reduce
 from pyspark.sql import functions as F
 from bigdata.common import mapping, require_columns, stage_parser, write_parquet

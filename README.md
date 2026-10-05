@@ -8,41 +8,104 @@ LR/XGBoost là baseline tham khảo phụ, không tham gia bảng so sánh bốn
 Code và artifacts HDA/v1, MCD, standalone Class-aware cũ được lưu trong `legacy/`.
 
 ```text
-raw data → split → harmonization → preprocessing → baselines
-         → domain shift → MMD → diagnostics → aggregate → final test
+raw CSV → Spark ingest → cleaning/schema validation → profiling
+        → split → harmonization → source-fitted preprocessing → Parquet
+        → PyTorch baselines → domain shift → MMD → diagnostics
+        → aggregate → final test → analytics Parquet → DuckDB → Tableau
 ```
 
-Cài đặt (Python >=3.11):
+**Spark handles data; PyTorch handles learning.** Luồng chạy chính thức bắt đầu
+trực tiếp từ raw flow CSV qua `bigdata.pipeline`. Chạy các lệnh từ repo root.
+
+Cài đặt (Python >=3.11, Java 17 cho dependency PySpark 3.5 của repo):
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e '.[bigdata,analytics,classical]'
 export PYTHONPATH="$PWD/src"
-# Spark cho bước chuẩn bị dữ liệu, Java phù hợp với phiên bản Spark được cài:
-pip install pyspark
-# Tuỳ chọn baseline XGBoost:
-pip install -e '.[classical]'
+export PYSPARK_PYTHON="$PWD/.venv/bin/python"
+export PYSPARK_DRIVER_PYTHON="$PYSPARK_PYTHON"
 ```
 
-Chuẩn bị raw CSV bằng `notebooks/data_merging.ipynb`, sau đó chạy
-`notebooks/unsw.ipynb` và `notebooks/cicids.ipynb` để chuẩn hóa tên cột, nhãn nhị phân
-và xuất `data/processed/{unsw,cicids}_common5.parquet`. Những bước này chưa fit
-imputer/scaler. Chạy notebook từ repo root. Dữ liệu không được đóng gói trong Git.
+Driver và workers cần dùng cùng Python minor version. Nếu shell đang đặt
+`SPARK_HOME` sang một bản Spark khác với PySpark trong `.venv`, chạy
+`unset SPARK_HOME` để dùng bản được cài trong môi trường này.
+
+Raw CSV phải có header và các cột trong `configs/common_features_v2.json`.
+UNSW dùng label nhị phân 0/1; CICIDS dùng category label (`BENIGN` là normal).
+Các CSV chứa flow features đã được extractor tính sẵn. Spark kiểm tra/làm sạch
+các giá trị, chọn 5 features và harmonize units. Dữ liệu không đóng gói trong Git.
+
+Chạy canonical data pipeline (thay đường dẫn bằng raw files của bạn):
 
 ```bash
-python -m features.splitting --dataset unsw
-python -m features.splitting --dataset cicids
-python -m features.common_features
-for direction in unsw_to_cicids cicids_to_unsw; do
-  python -m features.proposal_preprocessing --direction "$direction"
-done
+python -m bigdata.pipeline \
+  --unsw-csv data/raw/UNSW-NB15.csv \
+  --cicids-csv data/raw/CICIDS2017.csv
 ```
 
-Split cố định hash 70/15/15, seed 42, ở `data/splits_v2/`; harmonization ra
-`data/features/common_raw2/`. Preprocessing fit **source train** theo từng hướng,
-ra `data/features/proposal_v2/` và `models/proposal_v2/`.
-Các lệnh từ chối ghi đè outputs đã tồn tại.
+Mỗi tham số CSV nhận nhiều file; không cần merge bằng notebook trước:
+
+```bash
+python -m bigdata.pipeline \
+  --unsw-csv /path/to/unsw_part1.csv /path/to/unsw_part2.csv \
+  --cicids-csv /path/to/cicids_monday.csv /path/to/cicids_tuesday.csv
+```
+
+Hai ví dụ là hai cách truyền inputs cho cùng một lần chạy. Sau khi thành công:
+
+```text
+data/bigdata/proposal_v2/
+    manifest.json
+    ingested/
+    clean/
+    profiles/
+    splits/
+    common/
+    class_counts/
+
+data/features/proposal_v2/
+    unsw_to_cicids/{unsw,cicids}_{train,val,test}/
+    cicids_to_unsw/{unsw,cicids}_{train,val,test}/
+
+models/proposal_v2/
+    unsw_to_cicids/preprocessor.joblib
+    cicids_to_unsw/preprocessor.joblib
+```
+
+`manifest.json` là completion marker, chỉ được tạo sau khi mọi stage và cả hai
+hướng preprocessing hoàn thành. Split cố định hash 70/15/15, seed 42, trên raw
+feature keys; các dòng có cùng keys nằm trong cùng split. Median imputation,
+signed log1p và robust scaling fit **source train** theo từng hướng. Spark dùng
+quantile xấp xỉ, mặc định `--relative-error 0.001`; statistics, Spark version và
+`data_revision` được lưu trong artifacts. Không gom toàn bộ source train về RAM
+driver để fit processor. PyTorch đọc Parquet thành batch 5 features để train.
+
+Pipeline từ chối chạy nếu một trong ba output roots đã tồn tại, kể cả output của
+lần chạy dở. Trước canonical final run, lưu dữ liệu/preprocessors/checkpoints/results
+cũ cùng nhau vào `legacy/` theo revision, rồi dùng các canonical roots mới. Không
+trộn checkpoint hoặc results cũ với preprocessing Spark vừa tạo.
+
+Để kiểm tra data pipeline ở workspace riêng mà giữ artifacts hiện có:
+
+```bash
+python -m bigdata.pipeline \
+  --unsw-csv data/raw/UNSW-NB15.csv \
+  --cicids-csv data/raw/CICIDS2017.csv \
+  --work-root data/spark_preview/proposal_v2/work \
+  --feature-root data/spark_preview/proposal_v2/features \
+  --model-root data/spark_preview/proposal_v2/models
+```
+
+Các training/evaluation CLI bên dưới vẫn đọc canonical roots, nên preview outputs
+không tự động trở thành dữ liệu của thesis suite. Spark mặc định `local[2]`; đây là
+cấu hình chạy local. Nhận định hiệu năng Big Data cần số đo từ lần chạy thật với
+kích thước dữ liệu và cấu hình executor được ghi lại.
+
+`notebooks/data_merging.ipynb`, `notebooks/unsw.ipynb`, `notebooks/cicids.ipynb` và
+luồng cũ `features.splitting → features.common_features` dành cho khám phá/tham khảo.
+Chúng không phải prerequisite hay canonical final run của data layer Spark.
 
 Chạy development suite (2 hướng × 5 seeds × 4 methods):
 
@@ -99,10 +162,12 @@ Xem [protocol](docs/thesis_protocol.md), [manifest](docs/experiment_manifest.md)
 Interface Research → BI nằm ở `src/analytics/build_dashboard_tables.py`:
 
 ```bash
-pip install -e '.[analytics]'
-PYTHONPATH=src python -m analytics.build_dashboard_tables --duckdb
+python -m analytics.build_dashboard_tables \
+  --output analytics_snapshot_01 --duckdb \
+  --dataset-manifest data/bigdata/proposal_v2/manifest.json
 ```
 
-Xuất 5 bảng Parquet và DuckDB snapshot cho Tableau. Xem
+Xuất 5 bảng Parquet và DuckDB snapshot cho Tableau; dùng một output directory mới
+mỗi lần refresh. Kết nối Tableau cần cài DuckDB connector/driver. Xem
 [analytics pipeline](docs/analytics_pipeline.md) để biết grain, phase filters,
 provenance, connector và cách refresh snapshot.

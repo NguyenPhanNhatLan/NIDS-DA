@@ -94,6 +94,22 @@ class SparkDataLayerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid cicids raw labels"):
             clean(self.raw("cicids", [("1", "1", "1", "1", "1", "0", "a")]), "cicids")
 
+    def test_cicids_header_length_alias_is_one_feature(self):
+        raw = self.raw("cicids", [("1", "2", "3", "4", "5", "BENIGN", "a")])
+        both = raw.withColumn("Fwd Header Length", F.lit("20"))
+        both = both.withColumn("Fwd Header Length.1", F.lit("20.0"))
+        normalized = normalize_headers(both, "cicids")
+        self.assertEqual(normalized.columns.count("fwd_header_length"), 1)
+        self.assertNotIn("fwd_header_length_1", normalized.columns)
+        self.assertEqual(normalized.first().fwd_header_length, "20")
+        missing = both.withColumn("Fwd Header Length", F.lit(" "))
+        self.assertEqual(normalize_headers(missing, "cicids").first().fwd_header_length, "20.0")
+        alias_only = both.drop("Fwd Header Length")
+        self.assertIn("fwd_header_length", normalize_headers(alias_only, "cicids").columns)
+        conflict = both.withColumn("Fwd Header Length.1", F.lit("21"))
+        with self.assertRaisesRegex(ValueError, "Conflicting CICIDS"):
+            normalize_headers(conflict, "cicids")
+
     def test_split_is_disjoint_and_independent_of_partitions(self):
         rows = [(str(i), "1", "2", "3", "4", str(i % 2), str(i)) for i in range(150)]
         frame = clean(self.raw("unsw", rows), "unsw")
@@ -162,6 +178,15 @@ class SparkDataLayerTests(unittest.TestCase):
             manifest = run(self.spark, inputs, work, features, models)
             self.assertTrue((work / "manifest.json").is_file())
             self.assertEqual(manifest["data_revision"], "spark_data_v1")
+            for report in manifest["profiles"].values():
+                self.assertEqual(report["original_feature_count"], 6)
+                self.assertEqual(report["rows"], 100)
+                self.assertEqual(report["benign_rows"], 50)
+                self.assertEqual(report["attack_rows"], 50)
+                self.assertEqual(report["attack_ratio"], 0.5)
+                self.assertEqual(report["input_benign_rows"], 50)
+                self.assertEqual(report["input_attack_rows"], 50)
+                self.assertNotIn("_source_file", report["original_columns"])
             for direction in ("unsw_to_cicids", "cicids_to_unsw"):
                 processor = joblib.load(models / direction / "preprocessor.joblib")
                 self.assertEqual(len(processor.medians), 5)
