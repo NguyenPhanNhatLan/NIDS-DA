@@ -1,198 +1,88 @@
-# Thesis: cross-domain NIDS — proposal_v2
+# Cross-domain NIDS — canonical proposal_v2 pipeline
 
-Protocol chính duy nhất: `proposal_v2`, schema `configs/common_features_v2.json`.
-Năm features, đúng thứ tự: `flow_duration`, `fwd_packets`, `bwd_packets`, `fwd_bytes`, `bwd_bytes`.
-
-Bốn methods: **Source-only MLP → Marginal MMD → MK-MMD → Class-aware MMD**.
-LR/XGBoost là baseline tham khảo phụ, không tham gia bảng so sánh bốn methods.
-Code và artifacts HDA/v1, MCD, standalone Class-aware cũ được lưu trong `legacy/`.
+Một entry point chính thức: `python -m experiments.proposal_pipeline`.
+Một manifest: `data/revisions/canonical/manifest.json`.
 
 ```text
-raw CSV → Spark ingest → cleaning/schema validation → profiling
-        → split → harmonization → source-fitted preprocessing → Parquet
-        → PyTorch baselines → domain shift → MMD → diagnostics
-        → aggregate → final test → analytics Parquet → DuckDB → Tableau
+Nguồn Spark có manifest → raw identity + split + mapping/quality audit
+→ thống nhất precision-collision groups → source-train preprocessing → freeze
+→ intrinsic/directional diagnostics → 4 methods × 2 directions × 5 seeds
+→ development aggregate → final-test riêng
 ```
 
-**Spark handles data; PyTorch handles learning.** Luồng chạy chính thức bắt đầu
-trực tiếp từ raw flow CSV qua `bigdata.pipeline`. Chạy các lệnh từ repo root.
+Nguồn đầu vào hiện tại: `data/bigdata/thesis_20261005/`, gồm `manifest.json`,
+`ingested/`, `splits/`, `common/`. Đây là upstream, không phải phiên bản training
+thứ hai. Pipeline không phụ thuộc prepared roots cũ hoặc `data/features/common_raw`.
 
-Cài đặt (Python >=3.11, Java 17 cho dependency PySpark 3.5 của repo):
+Năm inputs theo `configs/common_features_v2.json`: `flow_duration`, `fwd_packets`,
+`bwd_packets`, `fwd_bytes`, `bwd_bytes`. CICIDS duration µs → seconds.
+Giữ mọi flow/label, báo ambiguity; nhóm raw hoặc prepared float32 giống nhau
+phải nằm trong một split. Hai chiều dùng cùng common splits và source-only fitted
+median → signed log1p → RobustScaler. Manifest khóa hashes trước training.
+
+## Cài đặt
 
 ```bash
-python -m venv .venv
+cd /Users/thonph/Desktop/KLTN
 source .venv/bin/activate
-pip install -e '.[bigdata,analytics,classical]'
+pip install -e '.[analytics]'
 export PYTHONPATH="$PWD/src"
-export PYSPARK_PYTHON="$PWD/.venv/bin/python"
-export PYSPARK_DRIVER_PYTHON="$PYSPARK_PYTHON"
 ```
 
-Driver và workers cần dùng cùng Python minor version. Nếu shell đang đặt
-`SPARK_HOME` sang một bản Spark khác với PySpark trong `.venv`, chạy
-`unset SPARK_HOME` để dùng bản được cài trong môi trường này.
-
-Raw CSV phải có header và các cột trong `configs/common_features_v2.json`.
-UNSW dùng label nhị phân 0/1; CICIDS dùng category label (`BENIGN` là normal).
-Các CSV chứa flow features đã được extractor tính sẵn. Spark kiểm tra/làm sạch
-các giá trị, chọn 5 features và harmonize units. Dữ liệu không đóng gói trong Git.
-
-Chạy canonical data pipeline (thay đường dẫn bằng raw files của bạn):
+## Chạy theo thứ tự
 
 ```bash
-python -m bigdata.pipeline \
-  --unsw-csv data/raw/UNSW-NB15.csv \
-  --cicids-csv data/raw/CICIDS2017.csv
+python -m experiments.proposal_pipeline --stage prepare
+python -m experiments.proposal_pipeline --stage verify
+python -m experiments.proposal_pipeline --stage diagnostics
+python -m experiments.proposal_pipeline --stage train
+python -m experiments.proposal_pipeline --stage evaluation
+python -m experiments.proposal_pipeline --stage aggregate
 ```
 
-Mỗi tham số CSV nhận nhiều file; không cần merge bằng notebook trước:
+`prepare` gồm raw duplicate/label audit, replay splits, mapping/quality audit và
+freeze. Raw identity audit chia 64 buckets để giới hạn bộ nhớ; so sánh vẫn chính
+xác trên toàn bộ cột, hash chỉ dùng để phân vùng. Mỗi bước dừng khi audit lỗi.
+Không tự ghi đè output của lần chạy trước hoặc build dở.
+
+`diagnostics` gồm intrinsic controls/sensitivity và hai chiều source-fitted.
+Intrinsic dùng cùng flow, subsamples và bandwidth khi hoán đổi domain; AUC dùng
+holdout theo domain và gom duplicate vectors cùng partition. MMD ± std là độ
+biến thiên subsampling, **không phải CI 95%**. Byte mapping còn có điều kiện về
+extractor semantics, nên luôn báo sensitivity bỏ hai byte features.
+
+`train` chạy source-only rồi marginal MMD, MK-MMD, class-aware MMD, theo cả hai
+chiều và seeds 42–46. Cả ba adaptation methods dùng một trainer. Checkpoint chọn
+bằng source-val AP; threshold bằng source-val F1. Không dùng target test để tuning.
+
+`evaluation` chạy negative-transfer diagnostics trên validation sau training,
+cho cả hai chiều, năm seeds và ba adaptation methods.
+
+Chỉ sau khi chốt development mới chạy:
 
 ```bash
-python -m bigdata.pipeline \
-  --unsw-csv /path/to/unsw_part1.csv /path/to/unsw_part2.csv \
-  --cicids-csv /path/to/cicids_monday.csv /path/to/cicids_tuesday.csv
+python -m experiments.proposal_pipeline --stage final-test
 ```
 
-Hai ví dụ là hai cách truyền inputs cho cùng một lần chạy. Sau khi thành công:
+## Output duy nhất
 
 ```text
-data/bigdata/proposal_v2/
-    manifest.json
-    ingested/
-    clean/
-    profiles/
-    splits/
-    common/
-    class_counts/
-
-data/features/proposal_v2/
-    unsw_to_cicids/{unsw,cicids}_{train,val,test}/
-    cicids_to_unsw/{unsw,cicids}_{train,val,test}/
-
-models/proposal_v2/
-    unsw_to_cicids/preprocessor.joblib
-    cicids_to_unsw/preprocessor.joblib
+results/data_audit/canonical/                 # reports trước freeze
+data/revisions/canonical/                    # common, prepared, manifest, audits
+models/canonical/                            # preprocessing và checkpoints
+results/canonical/                           # diagnostics, training, aggregate, final test
 ```
 
-`manifest.json` là completion marker, chỉ được tạo sau khi mọi stage và cả hai
-hướng preprocessing hoàn thành. Split cố định hash 70/15/15, seed 42, trên raw
-feature keys; các dòng có cùng keys nằm trong cùng split. Median imputation,
-signed log1p và robust scaling fit **source train** theo từng hướng. Spark dùng
-quantile xấp xỉ, mặc định `--relative-error 0.001`; statistics, Spark version và
-`data_revision` được lưu trong artifacts. Không gom toàn bộ source train về RAM
-driver để fit processor. PyTorch đọc Parquet thành batch 5 features để train.
+Pipeline tự chọn manifest; không cần export root hoặc direction riêng.
+Hash/inventory thay đổi sẽ bị chặn trước training/evaluation.
+Các module audit/training là thành phần nội bộ của cùng pipeline.
+Notebook và `legacy/` là lịch sử/EDA, không thuộc luồng chạy chính thức.
 
-Pipeline từ chối chạy nếu một trong ba output roots đã tồn tại, kể cả output của
-lần chạy dở. Trước canonical final run, lưu dữ liệu/preprocessors/checkpoints/results
-cũ cùng nhau vào `legacy/` theo revision, rồi dùng các canonical roots mới. Không
-trộn checkpoint hoặc results cũ với preprocessing Spark vừa tạo.
+Chi tiết: [canonical revision](docs/canonical_data_revision.md),
+[semantic mapping](docs/semantic_feature_review_20261009.md).
 
-Để kiểm tra data pipeline ở workspace riêng mà giữ artifacts hiện có:
+Nếu cần tự chạy synthetic tests, tách khỏi dữ liệu thật:
 
 ```bash
-python -m bigdata.pipeline \
-  --unsw-csv data/raw/UNSW-NB15.csv \
-  --cicids-csv data/raw/CICIDS2017.csv \
-  --work-root data/spark_preview/proposal_v2/work \
-  --feature-root data/spark_preview/proposal_v2/features \
-  --model-root data/spark_preview/proposal_v2/models
+KLTN_DATA_MANIFEST='' python -m unittest discover -s tests -v
 ```
-
-Các training/evaluation CLI bên dưới vẫn đọc canonical roots, nên preview outputs
-không tự động trở thành dữ liệu của thesis suite. Spark mặc định `local[2]`; đây là
-cấu hình chạy local. Nhận định hiệu năng Big Data cần số đo từ lần chạy thật với
-kích thước dữ liệu và cấu hình executor được ghi lại.
-
-`notebooks/data_merging.ipynb`, `notebooks/unsw.ipynb`, `notebooks/cicids.ipynb` và
-luồng cũ `features.splitting → features.common_features` dành cho khám phá/tham khảo.
-Chúng không phải prerequisite hay canonical final run của data layer Spark.
-
-Chạy development suite (2 hướng × 5 seeds × 4 methods):
-
-```bash
-for direction in unsw_to_cicids cicids_to_unsw; do
-  python -m evaluation.proposal_domain_shift --direction "$direction"
-  for seed in 42 43 44 45 46; do
-    python -m experiments.proposal_source_only --direction "$direction" --seed "$seed"
-    for config in proposal_mmd_v2 proposal_mkmmd_v2 proposal_class_aware_v2; do
-      python -m training.proposal_mmd --direction "$direction" --seed "$seed" \
-        --config "configs/$config.json"
-      python -m evaluation.proposal_negative_transfer --direction "$direction" --seed "$seed" \
-        --config "configs/$config.json"
-    done
-  done
-done
-python -m evaluation.proposal_aggregate
-```
-
-Có thể gọi `training.proposal_mkmmd` hoặc `training.proposal_class_aware` trực tiếp;
-chúng dùng cùng trainer và artifact contract. Source-only phải chạy trước MMD.
-Checkpoint chọn bằng **source-val AP**, threshold bằng **source-val F1**.
-Target train chỉ đọc features; target val dùng diagnostics sau training.
-Aggregate chỉ đọc development JSON, báo từng paired ΔAP, mean ± sample std và CI 95%.
-Với 5 seeds, CI phản ánh biến thiên giữa seeds, phụ thuộc giả định phân phối của mean;
-không đại diện cho bất định lấy mẫu toàn bộ dataset. Không báo significance test.
-
-Chỉ sau khi khóa configs, checkpoint và threshold mới chạy held-out final test:
-
-```bash
-for direction in unsw_to_cicids cicids_to_unsw; do
-  for seed in 42 43 44 45 46; do
-    for method in source_only marginal_mmd mk_mmd class_aware_mmd; do
-      python -m evaluation.proposal_final_test --direction "$direction" \
-        --method "$method" --seed "$seed"
-    done
-  done
-done
-```
-
-Final test kiểm tra schema, hashes, selection và tái lập source-val threshold trước
-khi đọc target test; lưu riêng trong `results/proposal_v2/final_target_test/`.
-Không dùng target test để chọn method/hyperparameters hoặc train lại.
-
-Kiểm tra code bằng fixtures tổng hợp, không chạy thesis training:
-
-```bash
-PYTHONPATH=src python -m unittest discover -s tests -v
-```
-
-Xem [protocol](docs/thesis_protocol.md), [manifest](docs/experiment_manifest.md),
-[data dictionary](docs/data_dictionary/) và [mapping audit](docs/feature_mapping_audit.csv).
-
-Đo intrinsic domain shift bằng đối chứng riêng, không thay preprocessing training:
-
-```bash
-python -m evaluation.proposal_domain_shift --mode intrinsic \
-  --raw-root data/bigdata/thesis_20261005/common \
-  --seed 42 --analysis-sample 100000 --mmd-sample 2048 --mmd-repeats 5
-```
-
-Nguồn phải là common-feature train **chưa scale**, gồm 5 cột canonical hoặc vector
-5 phần tử; không dùng các thư mục prepared theo direction. Chỉ đọc features,
-không đọc intrusion labels. Lưu mẫu 100,000 flow/domain (hoặc toàn bộ nếu ít hơn),
-chỉ số dòng, các cặp mẫu MMD và partition AUC trong
-`results/proposal_v2/domain_shift/intrinsic/seed42/samples.npz`, cùng `result.json`.
-Mẫu được chọn theo dataset và dùng lại khi hoán đổi chiều. Median/log/RobustScaler
-chung được fit trên pooled unlabeled training sample, chỉ phục vụ diagnostic.
-Mỗi lần lặp giữ cùng bandwidth cho hai chiều và các đối chứng cùng-domain;
-kiểm tra đối xứng bằng float64 với epsilon = 64 × machine epsilon (~1.42e-14).
-
-AUC dùng holdout khoảng 80/20 phân tầng theo domain và gom các vector giống hệt
-nhau trong cùng partition, preprocessing classifier chỉ fit trên train partition.
-Đối chứng cùng-domain dùng hai nhóm ngẫu nhiên không trùng dòng: MMD biased không
-bắt buộc bằng 0, AUC kỳ vọng gần 0.5; các giá trị này được báo để inspect, không
-áp một ngưỡng pass tùy ý. `mmd2_std` là độ biến thiên giữa các lần subsampling,
-**không phải CI 95%**. Chạy lại bằng `--overwrite` để thay artifact diagnostic.
-
-Interface Research → BI nằm ở `src/analytics/build_dashboard_tables.py`:
-
-```bash
-python -m analytics.build_dashboard_tables \
-  --output analytics_snapshot_01 --duckdb \
-  --dataset-manifest data/bigdata/proposal_v2/manifest.json
-```
-
-Xuất 5 bảng Parquet và DuckDB snapshot cho Tableau; dùng một output directory mới
-mỗi lần refresh. Kết nối Tableau cần cài DuckDB connector/driver. Xem
-[analytics pipeline](docs/analytics_pipeline.md) để biết grain, phase filters,
-provenance, connector và cách refresh snapshot.

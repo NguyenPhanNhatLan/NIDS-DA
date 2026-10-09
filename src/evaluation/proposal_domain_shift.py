@@ -25,11 +25,13 @@ from features.common_features import COMMON_FEATURES
 from features.parquet_vectors import vector_matrix
 from training.adaptation import mmd_loss, estimate_bandwidth_squared, rbf_kernel
 
+from training.data_revision import revision_path, verify_revision
+
 ROOT = Path(__file__).resolve().parents[2]
 
-FEATURE_ROOT = ROOT / "data" / "features" / "proposal_v2"
+FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
 
-RESULT_ROOT = ROOT / "results" / "proposal_v2" / "domain_shift"
+RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'domain_shift'
 
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
@@ -167,7 +169,7 @@ def sample_features(
 
                     output.append(
                         matrix[local_indices].astype(
-                            np.float32,
+                            np.float64 if allow_nonfinite else np.float32,
                             copy=True,
                         )
                     )
@@ -324,6 +326,7 @@ def compute_input_mmd(
         "repeats": int(repeats),
         "mmd2_mean": float(mmd_array.mean()),
         "mmd2_std": float(mmd_array.std(ddof=1) if repeats > 1 else 0.0),
+        "std_interpretation": "subsampling variability; not a 95% confidence interval",
         "mmd2_runs": [float(value) for value in mmd_values],
         "bandwidth_mean": float(bandwidth_array.mean()),
         "bandwidth_std": float(bandwidth_array.std(ddof=1) if repeats > 1 else 0.0),
@@ -425,6 +428,7 @@ def run(
     mmd_repeats=5,
     cv_folds=5,
 ):
+    revision = verify_revision()
     source_domain, target_domain = direction_domains(direction)
 
     base = FEATURE_ROOT / direction
@@ -495,7 +499,7 @@ def run(
     # ---------------------------------
 
     preprocessor_path = (
-        ROOT / "models" / "proposal_v2" / direction / "preprocessor.joblib"
+        revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib'
     )
 
     if not preprocessor_path.exists():
@@ -503,6 +507,7 @@ def run(
 
     result = {
         "protocol": "proposal_v2",
+        **revision,
         "analysis": "pre_adaptation_domain_shift",
         "direction": direction,
         "source_domain": source_domain,
@@ -614,7 +619,8 @@ def fixed_kernel_mmd(source, target, bandwidth_squared):
             - 2 * rbf_kernel(source, target, bandwidth_squared).mean())
 
 
-def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42):
+def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42,
+                  alternative_spaces=None):
     # Float64 and a rounding-scale tolerance, rather than sampling tolerance.
     epsilon = 64 * np.finfo(np.float64).eps
     n = min(sample_size, len(source) // 2, len(target) // 2)
@@ -622,7 +628,7 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42):
         raise ValueError("Intrinsic MMD needs >=4 rows/domain and >=1 repeat")
     rng_u = np.random.default_rng(seed)
     rng_c = np.random.default_rng(seed + 1)
-    records, indices = [], {}
+    records, indices, sensitivities = [], {}, {}
     with torch.no_grad():
         for repeat in range(repeats):
             ui = rng_u.choice(len(source), 2 * n, replace=False)
@@ -637,6 +643,20 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42):
             difference = abs(forward - reverse)
             if difference >= epsilon:
                 raise AssertionError(f"MMD symmetry failed: {difference} >= {epsilon}")
+            variants = {
+                'without_byte_features': (u[:, :3], c[:, :3]),
+                'without_duration': (u[:, 1:], c[:, 1:]),
+            }
+            for name, (a, b) in (alternative_spaces or {}).items():
+                variants[name] = (torch.from_numpy(a[ui[:n]]).double(),
+                                  torch.from_numpy(b[ci[:n]]).double())
+            for name, (a, b) in variants.items():
+                sigma2 = estimate_bandwidth_squared(a, b)
+                value = float(fixed_kernel_mmd(a, b, sigma2))
+                sensitivities.setdefault(name, []).append(value)
+            for sigma_multiplier in (0.5, 2.0):
+                value = float(fixed_kernel_mmd(u, c, bandwidth * sigma_multiplier ** 2))
+                sensitivities.setdefault(f'bandwidth_sigma_x{sigma_multiplier}', []).append(value)
             records.append({
                 "unsw_to_cicids": forward, "cicids_to_unsw": reverse,
                 "absolute_symmetry_error": difference,
@@ -654,6 +674,12 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42):
         "std_interpretation": "subsampling variability; not a 95% confidence interval",
         "symmetry_epsilon": epsilon, "symmetry_passed": True,
         "runs": records,
+        "sensitivity": {
+            name: {'mmd2_runs': runs, 'mmd2_mean': float(np.mean(runs)),
+                   'mmd2_std': float(np.std(runs, ddof=1)) if repeats > 1 else 0.0}
+            for name, runs in sensitivities.items()
+        },
+        "sensitivity_protocol": "same fixed subsample indices; feature/transform variants reestimate pooled bandwidth; bandwidth variants use baseline sigma x0.5/x2",
     }, indices
 
 
@@ -693,8 +719,13 @@ def intrinsic_auc(source, target, seed=42):
 def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
                   mmd_sample=2048, mmd_repeats=5, overwrite=False):
     """Diagnostic only: canonical raw training samples, shared pooled transform."""
-    from models.proposal_pipeline import signed_log1p
+    def signed_log1p(x):
+        x = np.asarray(x, dtype=np.float64)
+        return np.sign(x) * np.log1p(np.abs(x))
+    revision = verify_revision()
     raw_root = Path(raw_root)
+    if revision and raw_root.resolve() != revision_path('common_root', raw_root).resolve():
+        raise ValueError('Intrinsic raw-root must match the selected frozen canonical common root')
     output_dir = RESULT_ROOT / "intrinsic" / f"seed{seed}"
     if output_dir.exists() and not overwrite:
         raise FileExistsError(f"Result exists: {output_dir}. Use --overwrite to rerun.")
@@ -719,7 +750,9 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
     transformed = scaler.transform(logged)
     u, c = np.split(transformed, [len(raw["unsw"])])
     print("Computing fixed-pair MMD and symmetry controls...", flush=True)
-    mmd, pairs = intrinsic_mmd(u, c, mmd_sample, mmd_repeats, seed)
+    log_u, log_c = np.split(logged, [len(raw['unsw'])])
+    mmd, pairs = intrinsic_mmd(u, c, mmd_sample, mmd_repeats, seed,
+                               {'signed_log_without_scaler': (log_u, log_c)})
     artifacts.update(pairs)
     artifacts.update(unsw_transformed=u, cicids_transformed=c)
     # AUC sees common signed-log features; imputation/scaling fit inside holdout.
@@ -738,6 +771,7 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
         artifacts.update({f"{domain}_control_auc_{k}": v for k, v in split_indices.items()})
     result = {
         "protocol": "proposal_v2", "analysis": "intrinsic_domain_shift_diagnostic",
+        **revision,
         "seed": seed, "features": list(COMMON_FEATURES),
         "raw_root": str(raw_root.resolve()), "training_rows": totals,
         "sample_rows": {d: len(x) for d, x in raw.items()},
@@ -783,7 +817,7 @@ def main():
         ],
     )
     parser.add_argument("--mode", choices=["directional", "intrinsic"], default="directional")
-    parser.add_argument("--raw-root", type=Path, default=ROOT / "data/bigdata/thesis_20261005/common",
+    parser.add_argument("--raw-root", type=Path, default=revision_path('common_root', ROOT / 'data/bigdata/thesis_20261005/common'),
                         help="Canonical unscaled common-feature training Parquets for intrinsic mode.")
     parser.add_argument("--overwrite", action="store_true", help="Replace intrinsic diagnostic artifacts.")
 

@@ -22,11 +22,13 @@ from training.adaptation import estimate_bandwidth_squared, mmd_loss, rbf_kernel
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import freeze_bn_stats, output_paths
 
+from training.data_revision import revision_path, verify_revision
+
 ROOT = Path(__file__).resolve().parents[2]
-FEATURE_ROOT = ROOT / "data/features/proposal_v2"
-SOURCE_ROOT = ROOT / "models/proposal_v2/source_only_target_val"
-SOURCE_RESULT_ROOT = ROOT / "results/proposal_v2/source_only_target_val"
-OUTPUT_ROOT = ROOT / "results/proposal_v2/diagnostics_target_val"
+FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
+SOURCE_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'source_only_target_val'
+SOURCE_RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'source_only_target_val'
+OUTPUT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'diagnostics_target_val'
 EPS = 1e-12
 RULES = {
     "minimum_ap_drop": 0.01,
@@ -84,7 +86,7 @@ def load_models(direction, seed, config_path):
         )
     common_hash = sha256(ROOT / "configs/common_features_v2.json")
     preprocessor_hash = sha256(
-        ROOT / "models/proposal_v2" / direction / "preprocessor.joblib"
+        revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib'
     )
     for artifact in (source_cp, adapted_cp, source_result, adapted_result):
         if (
@@ -480,6 +482,7 @@ def run(
     gradient_batches=20,
     cv_folds=5,
 ):
+    revision = verify_revision()
     config_path = Path(config_path)
     source, target = domains(direction)
     default_config = ROOT / "configs/proposal_mmd_v2.json"
@@ -634,6 +637,7 @@ def run(
     ce_control = None
     result = {
         "direction": direction,
+        **revision,
         "seed": seed,
         "config": str(config_path),
         "config_sha256": sha256(config_path),

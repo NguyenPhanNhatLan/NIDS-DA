@@ -24,20 +24,22 @@ from training.proposal_class_aware import audit_pseudo_labels, class_aware_mmd_l
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mkmmd import multi_kernel_mmd_loss
 
+from training.data_revision import revision_path, verify_revision
+
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_CONFIG = ROOT / "configs" / "proposal_mmd_v2.json"
 
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
-FEATURE_ROOT = ROOT / "data" / "features" / "proposal_v2"
+FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
 
-MODEL_ROOT = ROOT / "models" / "proposal_v2" / "mmd"
+MODEL_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'mmd'
 
-RESULT_ROOT = ROOT / "results" / "proposal_v2" / "mmd"
+RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'mmd'
 
-SOURCE_ONLY_ROOT = ROOT / "results" / "proposal_v2" / "source_only_target_val"
-SOURCE_CHECKPOINT_ROOT = ROOT / "models" / "proposal_v2" / "source_only_target_val"
+SOURCE_ONLY_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'source_only_target_val'
+SOURCE_CHECKPOINT_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'source_only_target_val'
 
 
 def output_paths(direction, seed, config_path):
@@ -451,6 +453,7 @@ def run(
 
     config_path = Path(config_path)
 
+    revision = verify_revision()
     config = load_config(config_path)
 
     source, target = direction_domains(direction)
@@ -501,7 +504,7 @@ def run(
         or source_checkpoint["features"] != list(COMMON_FEATURES)
         or source_checkpoint["best_epoch"] != source_only["best_epoch"]
         or source_checkpoint["common_feature_config_sha256"] != sha256(COMMON_CONFIG)
-        or source_checkpoint["preprocessor_sha256"] != sha256(ROOT / "models/proposal_v2" / direction / "preprocessor.joblib")
+        or source_checkpoint["preprocessor_sha256"] != sha256(revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib')
         or source_only["common_feature_config_sha256"] != source_checkpoint["common_feature_config_sha256"]
         or source_only["preprocessor_sha256"] != source_checkpoint["preprocessor_sha256"]
     ):
@@ -640,6 +643,7 @@ def run(
 
     torch.save(
         {
+            **revision,
             "protocol": config["protocol_id"],
             "method": config["method"],
             "direction": direction,
@@ -675,6 +679,7 @@ def run(
     # --------------------------------------------------------
 
     result = {
+        **revision,
         "protocol": config["protocol_id"],
         "method": config["method"],
         "phase": "development",

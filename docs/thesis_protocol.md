@@ -10,10 +10,19 @@ not guarantee identical extraction semantics across datasets.
 Both transfer directions are required: UNSW → CICIDS and CICIDS → UNSW.
 Split membership is fixed using the five raw columns and hash seed 42 (70/15/15);
 equal split keys stay together. Run seeds 42–46 vary optimization, not split membership.
+The canonical freeze then moves complete float32 preprocessing-collision groups
+to the furthest held-out split and refits source-only processors until neither
+direction has cross-split overlap. All flows and original labels are preserved.
+The resulting membership is fixed for all training seeds; realized split proportions
+can differ from 70/15/15. See `canonical_data_revision.md` and the completion manifest
+at `data/revisions/canonical/manifest.json`.
 The raw cleaning/export notebooks precede splitting; harmonization subsequently
 orders features and converts duration units. All fitted preprocessing is downstream
 of splitting: source-train median imputation → signed log1p → RobustScaler.
 The same fitted processor transforms all source and target splits for that direction.
+Canonical preprocessing uses exact sklearn source-train median/IQR after the
+precision grouping correction. Only `experiments.proposal_pipeline` is the supported
+entry point; its stages and paths are documented in `README.md`.
 
 | Method | Configuration | Alignment |
 |---|---|---|

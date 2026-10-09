@@ -14,8 +14,12 @@ from models.baseline import BaselineMLP
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import output_paths, sha256
 
+from training.data_revision import revision_path, verify_revision
+
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = ROOT / "results/proposal_v2/final_target_test"
+OUTPUT_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2") / "final_target_test"
+)
 CONFIGS = {
     "marginal_mmd": ROOT / "configs/proposal_mmd_v2.json",
     "mk_mmd": ROOT / "configs/proposal_mkmmd_v2.json",
@@ -26,8 +30,14 @@ CONFIGS = {
 def paths(method, direction, seed):
     if method == "source_only":
         return (
-            ROOT / "models/proposal_v2/source_only_target_val" / direction / f"seed{seed}.pt",
-            ROOT / "results/proposal_v2/source_only_target_val" / direction / f"seed{seed}.json",
+            revision_path("model_root", ROOT / "models/proposal_v2")
+            / "source_only_target_val"
+            / direction
+            / f"seed{seed}.pt",
+            revision_path("result_root", ROOT / "results/proposal_v2")
+            / "source_only_target_val"
+            / direction
+            / f"seed{seed}.json",
         )
     if method not in CONFIGS:
         raise ValueError(f"Unknown proposal method: {method}")
@@ -35,18 +45,27 @@ def paths(method, direction, seed):
 
 
 def check_identity(artifact, direction, seed):
-    if (artifact["direction"] != direction or artifact["seed"] != seed
-            or artifact["features"] != list(COMMON_FEATURES)
-            or artifact.get("input_dim", artifact.get("feature_count")) != len(COMMON_FEATURES)):
-        raise ValueError("Checkpoint/result direction, seed, or feature schema mismatch")
+    if (
+        artifact["direction"] != direction
+        or artifact["seed"] != seed
+        or artifact["features"] != list(COMMON_FEATURES)
+        or artifact.get("input_dim", artifact.get("feature_count"))
+        != len(COMMON_FEATURES)
+    ):
+        raise ValueError(
+            "Checkpoint/result direction, seed, or feature schema mismatch"
+        )
 
 
 def run(direction, method, seed=42):
+    revision = verify_revision()
     if direction not in {"unsw_to_cicids", "cicids_to_unsw"}:
         raise ValueError(f"Unknown direction: {direction}")
     if method not in {"source_only", *CONFIGS}:
         raise ValueError(f"Unknown method: {method}")
-    source, target = ("unsw", "cicids") if direction == "unsw_to_cicids" else ("cicids", "unsw")
+    source, target = (
+        ("unsw", "cicids") if direction == "unsw_to_cicids" else ("cicids", "unsw")
+    )
     output = OUTPUT_ROOT / method / direction / f"seed{seed}.json"
     if output.exists():
         raise FileExistsError(f"Final-test result already exists: {output}")
@@ -62,7 +81,7 @@ def run(direction, method, seed=42):
     if development["checkpoint"] != str(checkpoint_path):
         raise ValueError("Development result points to another checkpoint")
 
-    base = ROOT / "data/features/proposal_v2" / direction
+    base = revision_path("feature_root", ROOT / "data/features/proposal_v2") / direction
     prepared = {
         "source_train": split_sha256(base / f"{source}_train"),
         "source_val": split_sha256(base / f"{source}_val"),
@@ -70,31 +89,48 @@ def run(direction, method, seed=42):
         "target_val": split_sha256(base / f"{target}_val"),
     }
     common_hash = sha256(ROOT / "configs/common_features_v2.json")
-    processor_hash = sha256(ROOT / "models/proposal_v2" / direction / "preprocessor.joblib")
+    processor_hash = sha256(
+        revision_path("model_root", ROOT / "models/proposal_v2")
+        / direction
+        / "preprocessor.joblib"
+    )
     for artifact in (checkpoint, development):
-        if (artifact["prepared_split_sha256"] != prepared
-                or artifact["common_feature_config_sha256"] != common_hash
-                or artifact["preprocessor_sha256"] != processor_hash):
+        if (
+            artifact["prepared_split_sha256"] != prepared
+            or artifact["common_feature_config_sha256"] != common_hash
+            or artifact["preprocessor_sha256"] != processor_hash
+        ):
             raise ValueError("Frozen artifact does not match current prepared data")
 
     if method == "source_only":
-        if (checkpoint["best_epoch"] != development["best_epoch"]
-                or not np.isclose(checkpoint["best_source_val_ap"],
-                                   development["best_source_val_ap"], atol=1e-6, rtol=0)):
+        if checkpoint["best_epoch"] != development["best_epoch"] or not np.isclose(
+            checkpoint["best_source_val_ap"],
+            development["best_source_val_ap"],
+            atol=1e-6,
+            rtol=0,
+        ):
             raise ValueError("Source-only checkpoint selection mismatch")
         threshold = development["threshold_from_source_val"]
         best_ap = checkpoint["best_source_val_ap"]
     else:
         source_checkpoint, _ = paths("source_only", direction, seed)
-        if (checkpoint["method"] != method or development["method"] != method
-                or checkpoint["config_sha256"] != sha256(CONFIGS[method])
-                or development["config_sha256"] != checkpoint["config_sha256"]
-                or checkpoint["source_checkpoint"] != str(source_checkpoint)
-                or checkpoint["source_checkpoint_sha256"] != sha256(source_checkpoint)
-                or development["source_checkpoint_sha256"] != checkpoint["source_checkpoint_sha256"]
-                or checkpoint["best_epoch"] != development["best_epoch"]
-                or not np.isclose(checkpoint["best_source_val_ap"],
-                                   development["best_source_val_ap"], atol=1e-6, rtol=0)):
+        if (
+            checkpoint["method"] != method
+            or development["method"] != method
+            or checkpoint["config_sha256"] != sha256(CONFIGS[method])
+            or development["config_sha256"] != checkpoint["config_sha256"]
+            or checkpoint["source_checkpoint"] != str(source_checkpoint)
+            or checkpoint["source_checkpoint_sha256"] != sha256(source_checkpoint)
+            or development["source_checkpoint_sha256"]
+            != checkpoint["source_checkpoint_sha256"]
+            or checkpoint["best_epoch"] != development["best_epoch"]
+            or not np.isclose(
+                checkpoint["best_source_val_ap"],
+                development["best_source_val_ap"],
+                atol=1e-6,
+                rtol=0,
+            )
+        ):
             raise ValueError("Adapted artifact provenance or selection mismatch")
         threshold = development["threshold"]
         best_ap = development["best_source_val_ap"]
@@ -107,9 +143,12 @@ def run(direction, method, seed=42):
     source_y, source_scores = collect_scores(model, source_val)
     current_ap = average_precision_score(source_y, source_scores)
     current_threshold = select_f1_threshold(source_y, source_scores)
-    if (not np.isclose(current_ap, best_ap, atol=1e-3, rtol=0)
-            or not np.isclose(current_threshold, threshold, atol=1e-6, rtol=0)):
-        raise ValueError("Frozen checkpoint no longer reproduces source-val AP/threshold")
+    if not np.isclose(current_ap, best_ap, atol=1e-3, rtol=0) or not np.isclose(
+        current_threshold, threshold, atol=1e-6, rtol=0
+    ):
+        raise ValueError(
+            "Frozen checkpoint no longer reproduces source-val AP/threshold"
+        )
 
     # No target test labels are read until model, threshold, and provenance are fixed.
     test_path = base / f"{target}_test"
@@ -118,6 +157,7 @@ def run(direction, method, seed=42):
         model, ParquetBatchStream(test_path, 1024, False, seed, True)
     )
     result = {
+        **revision,
         "protocol": "proposal_v2",
         "phase": "final_test",
         "direction": direction,
@@ -144,7 +184,9 @@ def run(direction, method, seed=42):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"])
+    parser.add_argument(
+        "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
+    )
     parser.add_argument("--method", required=True, choices=["source_only", *CONFIGS])
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

@@ -1,5 +1,4 @@
 """Three-scale marginal MK-MMD for the proposal_v2 shared latent space."""
-import argparse
 from pathlib import Path
 
 import torch
@@ -29,17 +28,3 @@ def multi_kernel_mmd_loss(source_z, target_z, scales):
         k_st = torch.exp(-d_st / (2 * bandwidth_squared))
         losses.append(k_ss.mean() + k_tt.mean() - 2 * k_st.mean())
     return torch.stack(losses).mean(), torch.sqrt(base_bandwidth_squared)
-
-
-def main():
-    from training.proposal_mmd import run
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"])
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-    run(args.direction, args.seed, DEFAULT_CONFIG)
-
-
-if __name__ == "__main__":
-    main()

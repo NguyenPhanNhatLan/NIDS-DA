@@ -12,6 +12,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from scipy.stats import t
+from training.data_revision import revision_path
 
 ROOT = Path(__file__).resolve().parents[2]
 METHODS = {'source_only', 'marginal_mmd', 'mk_mmd', 'class_aware_mmd'}
@@ -307,7 +308,7 @@ def build_tables(result_root, dataset_manifest=None):
                     'small_seed_caveat': '95% t intervals reflect run-seed variation on fixed datasets; small n gives uncertain intervals.'}
 
 
-def export(result_root=ROOT / 'results/proposal_v2', output=ROOT / 'analytics', dataset_manifest=None, duckdb=False):
+def export(result_root=revision_path('result_root', ROOT / 'results/proposal_v2'), output=ROOT / 'analytics', dataset_manifest=None, duckdb=False):
     output = Path(output).resolve()
     if output.exists():
         raise FileExistsError(f'Use a fresh BI snapshot directory: {output}')
@@ -343,7 +344,7 @@ def export(result_root=ROOT / 'results/proposal_v2', output=ROOT / 'analytics', 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--results-root', type=Path, default=ROOT / 'results/proposal_v2')
+    parser.add_argument('--results-root', type=Path, default=revision_path('result_root', ROOT / 'results/proposal_v2'))
     parser.add_argument('--output', type=Path, default=ROOT / 'analytics')
     parser.add_argument('--dataset-manifest', type=Path)
     parser.add_argument('--duckdb', action='store_true', help='Also materialize portable dashboard.duckdb tables')

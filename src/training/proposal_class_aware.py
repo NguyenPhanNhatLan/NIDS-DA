@@ -1,5 +1,4 @@
 """Class-conditional single-RBF MMD using confident target predictions."""
-import argparse
 from pathlib import Path
 import torch
 from training.adaptation import mmd_loss
@@ -48,16 +47,3 @@ def audit_pseudo_labels(model, path, confidence=0.8):
     return {'target_rows': rows, 'accepted': accepted, 'pseudo_normal': counts[0],
             'pseudo_attack': counts[1], 'accepted_rate': accepted / rows if rows else 0.0,
             'target_labels_used': False}
-
-
-def main():
-    from training.proposal_mmd import run
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--direction', required=True, choices=['unsw_to_cicids', 'cicids_to_unsw'])
-    parser.add_argument('--seed', type=int, default=42)
-    args = parser.parse_args()
-    run(args.direction, args.seed, DEFAULT_CONFIG)
-
-
-if __name__ == '__main__':
-    main()
