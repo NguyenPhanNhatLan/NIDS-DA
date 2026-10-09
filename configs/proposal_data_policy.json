@@ -1,0 +1,4 @@
+{
+  "max_relocated_fraction": 0.01,
+  "max_class_prevalence_change": 0.005
+}

@@ -1,12 +1,7 @@
 """Class-conditional single-RBF MMD using confident target predictions."""
-from pathlib import Path
 import torch
 from training.adaptation import mmd_loss
 from training.proposal_data import ParquetBatchStream
-
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG = ROOT / 'configs/proposal_class_aware_v2.json'
-
 
 def pseudo_label_counts(logits, confidence):
     probabilities, labels = logits.detach().softmax(dim=1).max(dim=1)
@@ -18,18 +13,31 @@ def pseudo_label_counts(logits, confidence):
 def class_aware_mmd_loss(source, source_labels, target, target_logits, confidence):
     probabilities, labels = target_logits.detach().softmax(dim=1).max(dim=1)
     accepted = probabilities >= confidence
+    # Frozen policy: align both classes or skip the entire class-aware term.
+    # Never lower confidence or manufacture minority pseudo-labels.
+    if any(int((source_labels == label).sum()) < 2
+           or int((accepted & (labels == label)).sum()) < 2 for label in (0, 1)):
+        zero = (source.sum() + target.sum()) * 0.0
+        return zero, zero.detach()
     losses, bandwidths = [], []
     for label in (0, 1):
         source_class = source[source_labels == label]
         target_class = target[accepted & (labels == label)]
-        if len(source_class) >= 2 and len(target_class) >= 2:
-            loss, bandwidth = mmd_loss(source_class, target_class)
-            losses.append(loss)
-            bandwidths.append(bandwidth)
-    if not losses:
-        zero = (source.sum() + target.sum()) * 0.0
-        return zero, zero.detach()
+        loss, bandwidth = mmd_loss(source_class, target_class)
+        losses.append(loss)
+        bandwidths.append(bandwidth)
     return torch.stack(losses).mean(), torch.stack(bandwidths).mean()
+
+
+def class_aware_batch_stats(source_labels, target_logits, confidence):
+    probabilities, labels = target_logits.detach().softmax(dim=1).max(dim=1)
+    accepted = probabilities >= confidence
+    predicted = torch.bincount(labels, minlength=2).tolist()
+    counts = torch.bincount(labels[accepted], minlength=2).tolist()
+    source_counts = torch.bincount(source_labels, minlength=2).tolist()
+    eligible = [label for label in (0, 1) if source_counts[label] >= 2 and counts[label] >= 2]
+    return {'predicted_per_class': predicted, 'accepted_per_class': counts,
+            'eligible_classes': eligible, 'active_classes': eligible if len(eligible) == 2 else []}
 
 
 @torch.no_grad()

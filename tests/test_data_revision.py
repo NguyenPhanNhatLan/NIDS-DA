@@ -13,17 +13,21 @@ from evaluation.proposal_data_audit import inventory
 from features import freeze_proposal_revision as freeze_module
 from features.common_features import COMMON_FEATURES
 from training.data_revision import verify_revision
-from evaluation.proposal_split_replay import numeric_hash
 
 
 class FrozenRevisionTests(unittest.TestCase):
-    def test_numeric_hash_null_zero_and_type_rules(self):
-        seed = np.full(3, 42, dtype=np.uint64)
-        result = numeric_hash(np.array([np.nan, 0., -0.]), seed)
-        self.assertEqual(result[0], seed[0])
-        self.assertEqual(result[1], result[2])
-        self.assertNotEqual(numeric_hash(np.array([1.]), seed[:1], True)[0],
-                            numeric_hash(np.array([1.]), seed[:1], False)[0])
+    def test_relocation_audit_reports_labels_and_enforces_design_limits(self):
+        initial = {d: np.array([0, 0, 1, 1, 2, 2]) for d in freeze_module.DOMAINS}
+        final = {d: np.array([0, 2, 1, 1, 2, 2]) for d in freeze_module.DOMAINS}
+        labels = {d: np.array([0, 1, 0, 1, 0, 1]) for d in freeze_module.DOMAINS}
+        report = freeze_module.relocation_audit(initial, final, labels, .01, .005)
+        self.assertFalse(report['quality_gate_passed'])
+        domain = report['domains']['unsw']
+        self.assertEqual(domain['relocated_unique_rows'], 1)
+        self.assertEqual(domain['transitions']['train_to_test']['class_counts'], [0, 1])
+        self.assertEqual(domain['initial']['train']['rows'], 2)
+        self.assertEqual(domain['final']['train']['rows'], 1)
+        self.assertEqual(domain['attack_prevalence_change']['train'], -.5)
 
     def test_freeze_preserves_rows_groups_and_rejects_mutations(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,7 +56,7 @@ class FrozenRevisionTests(unittest.TestCase):
             audit_path = root / 'audit.json'
             audit_path.write_text(json.dumps(audit))
             with patch.object(freeze_module, 'ROOT', root):
-                manifest_path = freeze_module.freeze(audit_path, 'fixture')
+                manifest_path = freeze_module.freeze(audit_path, 'fixture', max_relocated_fraction=.1, max_class_prevalence_change=.1)
             manifest = json.loads(manifest_path.read_text())
             for direction in ('unsw_to_cicids', 'cicids_to_unsw'):
                 for domain in freeze_module.DOMAINS:

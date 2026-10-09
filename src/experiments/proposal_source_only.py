@@ -12,7 +12,7 @@ from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.baseline import set_seed, train_baseline
 from training.proposal_data import ParquetBatchStream, split_sha256
-from training.data_revision import revision_path, verify_revision
+from training.data_revision import revision_path, verify_revision, require_development_open
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_DIM = len(COMMON_FEATURES)
@@ -44,6 +44,7 @@ def count_classes(loader):
 
 
 def run(direction, seed=42, overwrite=False):
+    require_development_open()
     revision = verify_revision()
     source, target = domains(direction)
     checkpoint_path = CHECKPOINT_ROOT / direction / f"seed{seed}.pt"

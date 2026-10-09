@@ -11,11 +11,7 @@ import torch
 
 from scipy.stats import ks_2samp
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import (
-    StratifiedKFold,
-    StratifiedGroupKFold,
-    cross_val_score,
-)
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import RobustScaler
@@ -355,64 +351,7 @@ def compute_domain_auc(
     seed=42,
     folds=5,
 ):
-    n = min(
-        len(source),
-        len(target),
-    )
-
-    source = source[:n]
-    target = target[:n]
-
-    x = np.concatenate(
-        [
-            source,
-            target,
-        ],
-        axis=0,
-    )
-
-    y = np.concatenate(
-        [
-            np.zeros(
-                n,
-                dtype=np.int64,
-            ),
-            np.ones(
-                n,
-                dtype=np.int64,
-            ),
-        ],
-        axis=0,
-    )
-
-    model = LogisticRegression(
-        max_iter=1000,
-        solver="lbfgs",
-        random_state=seed,
-    )
-
-    cv = StratifiedKFold(
-        n_splits=folds,
-        shuffle=True,
-        random_state=seed,
-    )
-
-    scores = cross_val_score(
-        model,
-        x,
-        y,
-        scoring="roc_auc",
-        cv=cv,
-    )
-
-    return {
-        "classifier": "logistic_regression",
-        "samples_per_domain": int(n),
-        "cv_folds": int(folds),
-        "auc_mean": float(scores.mean()),
-        "auc_std": float(scores.std(ddof=1) if len(scores) > 1 else 0.0),
-        "auc_folds": [float(score) for score in scores],
-    }
+    return domain_auc_cv(source, target, seed=seed, folds=folds)[0]
 
 
 # =========================================================
@@ -683,37 +622,49 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42,
     }, indices
 
 
-def intrinsic_auc(source, target, seed=42):
-    """Held-out domain AUC; identical feature vectors stay in one partition."""
-    x = np.concatenate([source, target])
+def domain_auc_cv(source, target, seed=42, folds=5):
+    """Shared full grouped-CV protocol for every domain-classifier diagnostic."""
+    if folds < 2:
+        raise ValueError('Grouped domain AUC requires at least two folds')
+    x = np.concatenate([source, target]).astype(np.float64)
     y = np.concatenate([np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)])
     # Treat identical vectors (including missing-value locations) as one group.
     canonical = np.where(np.isfinite(x), x, np.nan)
+    canonical[canonical == 0] = 0  # +/-0 are the same vector.
+    x = canonical
     keys = np.ascontiguousarray(canonical).view(
         np.dtype((np.void, canonical.dtype.itemsize * canonical.shape[1]))
     ).ravel()
     _, groups = np.unique(keys, return_inverse=True)
-    cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
-    train, test = next(cv.split(x, y, groups))
-    if np.intersect1d(groups[train], groups[test]).size:
-        raise AssertionError("Duplicate feature vectors overlap train/test")
-    if len(np.unique(y[train])) != 2 or len(np.unique(y[test])) != 2:
-        raise ValueError("Not enough distinct groups for a two-domain held-out split")
-    # Fit all preprocessing only on the classifier's training partition.
-    model = make_pipeline(
-        SimpleImputer(strategy="median", keep_empty_features=True),
-        RobustScaler(), LogisticRegression(max_iter=1000, random_state=seed),
-    )
-    model.fit(x[train], y[train])
-    score = roc_auc_score(y[test], model.predict_proba(x[test])[:, 1])
+    if len(np.unique(groups)) < folds or min(len(source), len(target)) < folds:
+        raise ValueError('Not enough samples/groups for the requested domain AUC folds')
+    cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=seed)
+    scores, details, indices = [], [], {}
+    for fold, (train, test) in enumerate(cv.split(x, y, groups)):
+        if np.intersect1d(groups[train], groups[test]).size:
+            raise AssertionError("Duplicate feature vectors overlap train/test")
+        if len(np.unique(y[train])) != 2 or len(np.unique(y[test])) != 2:
+            raise ValueError("Not enough distinct groups for two-domain grouped CV")
+        model = make_pipeline(
+            SimpleImputer(strategy="median", keep_empty_features=True),
+            RobustScaler(), LogisticRegression(max_iter=1000, random_state=seed),
+        )
+        model.fit(x[train], y[train])
+        scores.append(float(roc_auc_score(y[test], model.predict_proba(x[test])[:, 1])))
+        indices[f'fold{fold}_train'], indices[f'fold{fold}_test'] = train, test
+        details.append({'fold': fold, 'train_domain_counts': np.bincount(y[train], minlength=2).tolist(),
+                        'test_domain_counts': np.bincount(y[test], minlength=2).tolist()})
     return {
-        "auc": float(score), "split": "first fold of 5-fold stratified group split (~80/20)",
+        'classifier': 'logistic_regression', 'cv_folds': folds,
+        'source_sample_rows': len(source), 'target_sample_rows': len(target),
+        'auc_mean': float(np.mean(scores)), 'auc_std': float(np.std(scores, ddof=1)),
+        'auc_folds': scores, 'fold_details': details,
+        "split": "full stratified grouped cross-validation",
         "grouping": "identical feature vectors; no overlap between train/test",
-        "train_domain_counts": np.bincount(y[train], minlength=2).tolist(),
-        "test_domain_counts": np.bincount(y[test], minlength=2).tolist(),
         "duplicate_groups_overlap": 0,
         "preprocessing_fit": "classifier training partition only",
-    }, {"train": train, "test": test}
+        'std_interpretation': 'fold variability; not a 95% confidence interval',
+    }, indices
 
 
 def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
@@ -757,14 +708,14 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
     artifacts.update(unsw_transformed=u, cicids_transformed=c)
     # AUC sees common signed-log features; imputation/scaling fit inside holdout.
     logged_raw = {d: signed_log1p(x).astype(np.float64) for d, x in raw.items()}
-    auc, auc_indices = intrinsic_auc(logged_raw["unsw"], logged_raw["cicids"], seed)
+    auc, auc_indices = domain_auc_cv(logged_raw["unsw"], logged_raw["cicids"], seed)
     artifacts.update({f"domain_auc_{k}": v for k, v in auc_indices.items()})
     controls = {}
     for offset, domain in enumerate(("unsw", "cicids")):
         permutation = np.random.default_rng(seed + 100 + offset).permutation(len(raw[domain]))
         half = len(permutation) // 2
         first, second = permutation[:half], permutation[half:]
-        controls[domain], split_indices = intrinsic_auc(
+        controls[domain], split_indices = domain_auc_cv(
             logged_raw[domain][first], logged_raw[domain][second], seed + offset,
         )
         artifacts[f"{domain}_auc_random_partition"] = permutation
@@ -797,7 +748,7 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
     print(f"MMD² = {mmd['mmd2_mean']:.6f} ± {mmd['mmd2_std']:.6f} (subsampling std, not 95% CI)")
-    print(f"Symmetry passed (epsilon={mmd['symmetry_epsilon']:.3g}); held-out AUC={auc['auc']:.6f}")
+    print(f"Symmetry passed (epsilon={mmd['symmetry_epsilon']:.3g}); grouped-CV AUC={auc['auc_mean']:.6f} ± {auc['auc_std']:.6f}")
     print(f"Saved: {output}")
     return result
 

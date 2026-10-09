@@ -57,7 +57,8 @@ def check_identity(artifact, direction, seed):
         )
 
 
-def run(direction, method, seed=42):
+def validate_development(direction, method, seed=42):
+    """Validate identity/provenance/selection and replay source val; never read target test."""
     revision = verify_revision()
     if direction not in {"unsw_to_cicids", "cicids_to_unsw"}:
         raise ValueError(f"Unknown direction: {direction}")
@@ -66,10 +67,6 @@ def run(direction, method, seed=42):
     source, target = (
         ("unsw", "cicids") if direction == "unsw_to_cicids" else ("cicids", "unsw")
     )
-    output = OUTPUT_ROOT / method / direction / f"seed{seed}.json"
-    if output.exists():
-        raise FileExistsError(f"Final-test result already exists: {output}")
-
     checkpoint_path, result_path = paths(method, direction, seed)
     for path in (checkpoint_path, result_path):
         if not path.is_file():
@@ -78,6 +75,8 @@ def run(direction, method, seed=42):
     development = json.loads(result_path.read_text())
     for artifact in (checkpoint, development):
         check_identity(artifact, direction, seed)
+        if any(artifact.get(key) != value for key, value in revision.items()):
+            raise ValueError('Development checkpoint/result belongs to another frozen revision')
     if development["checkpoint"] != str(checkpoint_path):
         raise ValueError("Development result points to another checkpoint")
 
@@ -150,7 +149,24 @@ def run(direction, method, seed=42):
             "Frozen checkpoint no longer reproduces source-val AP/threshold"
         )
 
-    # No target test labels are read until model, threshold, and provenance are fixed.
+    return {'model': model, 'threshold': threshold, 'source_val_ap': float(current_ap),
+            'target': target, 'base': base, 'checkpoint_path': checkpoint_path,
+            'result_path': result_path, 'revision': revision}
+
+
+def run(direction, method, seed=42):
+    revision = verify_revision()
+    if revision:
+        from evaluation.proposal_development_lock import require_development_lock
+        require_development_lock(revision)
+    output = OUTPUT_ROOT / method / direction / f'seed{seed}.json'
+    if output.exists():
+        raise FileExistsError(f'Final-test result already exists: {output}')
+    validated = validate_development(direction, method, seed)
+    model, threshold = validated['model'], validated['threshold']
+    target, base = validated['target'], validated['base']
+    checkpoint_path, result_path = validated['checkpoint_path'], validated['result_path']
+    # No target test labels are read until the complete development lock and source replay pass.
     test_path = base / f"{target}_test"
     test_hash = split_sha256(test_path)
     target_y, target_scores = collect_scores(
@@ -171,7 +187,7 @@ def run(direction, method, seed=42):
         "checkpoint_sha256": sha256(checkpoint_path),
         "development_result": str(result_path),
         "threshold_from_source_val": threshold,
-        "source_val_ap_verified": float(current_ap),
+        "source_val_ap_verified": validated['source_val_ap'],
         "target_test": compute_metrics(target_y, target_scores, threshold),
     }
     output.parent.mkdir(parents=True, exist_ok=True)

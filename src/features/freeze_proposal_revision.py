@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import shutil
+import time
+import csv
 
 import joblib
 import numpy as np
@@ -14,11 +16,72 @@ from features.common_features import COMMON_FEATURES
 from models.proposal_pipeline import proposal_processor
 from training.data_revision import file_sha256
 from evaluation.proposal_data_audit import DOMAINS, SPLITS, inventory, audit_common
+from training.resource_usage import resource_observation
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def freeze(audit_path, revision='canonical', conflict_policy='preserve'):
+def relocation_audit(initial, final, labels, max_relocated_fraction, max_class_prevalence_change):
+    reports = {}
+    for d in DOMAINS:
+        before, after, transitions = {}, {}, {}
+        for i, split in enumerate(SPLITS):
+            for membership, result in ((initial[d], before), (final[d], after)):
+                selected = membership == i
+                classes = np.bincount(labels[d][selected], minlength=2).tolist()
+                result[split] = {'rows': int(selected.sum()), 'class_counts': classes,
+                                 'attack_prevalence': classes[1] / sum(classes) if sum(classes) else None}
+            for j, destination in enumerate(SPLITS):
+                selected = (initial[d] == i) & (final[d] == j)
+                if i != j:
+                    transitions[f'{split}_to_{destination}'] = {'rows': int(selected.sum()),
+                        'class_counts': np.bincount(labels[d][selected], minlength=2).tolist()}
+        moved = int(np.count_nonzero(initial[d] != final[d]))
+        fraction = moved / len(initial[d])
+        deltas = {s: after[s]['attack_prevalence'] - before[s]['attack_prevalence']
+                  if after[s]['attack_prevalence'] is not None and before[s]['attack_prevalence'] is not None else None
+                  for s in SPLITS}
+        reports[d] = {'initial': before, 'final': after, 'relocated_unique_rows': moved,
+                      'relocated_fraction': fraction, 'transitions': transitions,
+                      'attack_prevalence_change': deltas,
+                      'within_policy': fraction <= max_relocated_fraction and all(
+                          delta is not None and abs(delta) <= max_class_prevalence_change for delta in deltas.values())}
+    return {'class_order': ['Normal (0)', 'Attack (1)'], 'domains': reports, 'policy': {'max_relocated_fraction': max_relocated_fraction,
+            'max_class_prevalence_change': max_class_prevalence_change,
+            'interpretation': 'predeclared design review limits, not statistical significance thresholds'},
+            'quality_gate_passed': all(r['within_policy'] for r in reports.values())}
+
+
+def write_relocation_report(snapshot, report):
+    (snapshot / 'relocation_audit.json').write_text(json.dumps(report, indent=2) + '\n')
+    rows = []
+    for domain, audit in report['domains'].items():
+        for split in SPLITS:
+            before, after = audit['initial'][split], audit['final'][split]
+            outgoing = [v for k, v in audit['transitions'].items() if k.startswith(split + '_to_')]
+            incoming = [v for k, v in audit['transitions'].items() if k.endswith('_to_' + split)]
+            rows.append({'domain': domain, 'split': split,
+                         'initial_rows': before['rows'], 'final_rows': after['rows'],
+                         'initial_normal': before['class_counts'][0], 'initial_attack': before['class_counts'][1],
+                         'final_normal': after['class_counts'][0], 'final_attack': after['class_counts'][1],
+                         'relocated_out_rows': sum(v['rows'] for v in outgoing),
+                         'relocated_out_normal': sum(v['class_counts'][0] for v in outgoing),
+                         'relocated_out_attack': sum(v['class_counts'][1] for v in outgoing),
+                         'relocated_in_rows': sum(v['rows'] for v in incoming),
+                         'initial_attack_prevalence': before['attack_prevalence'],
+                         'final_attack_prevalence': after['attack_prevalence'],
+                         'attack_prevalence_change': audit['attack_prevalence_change'][split]})
+    with (snapshot / 'relocation_audit.csv').open('w', newline='', encoding='utf-8') as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def freeze(audit_path, revision='canonical', conflict_policy='preserve',
+           max_relocated_fraction=0.01, max_class_prevalence_change=0.005):
+    started = time.perf_counter()
+    if not 0 <= max_relocated_fraction <= 1 or not 0 <= max_class_prevalence_change <= 1:
+        raise ValueError('Relocation design review limits must be in [0,1]')
     audit_path = Path(audit_path)
     audit = json.loads(audit_path.read_text())
     if not audit['quality_gate_passed']:
@@ -67,6 +130,7 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve'):
         memberships[d] = np.concatenate(splits)
         keep[d] = np.ones(len(arrays[d]), dtype=bool)
     connection = duckdb.connect()
+    initial_memberships = {d: membership.copy() for d, membership in memberships.items()}
     connection.execute("SET threads=2")
     connection.execute("SET memory_limit='1GB'")
     precision_iterations = []
@@ -108,8 +172,27 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve'):
             break
         for d in DOMAINS:
             memberships[d] = new_memberships[d]
+        candidate = relocation_audit(initial_memberships, memberships, labels,
+                                     max_relocated_fraction, max_class_prevalence_change)
+        if not candidate['quality_gate_passed']:
+            candidate['resources'] = resource_observation(started)
+            candidate['precision_cross_split_groups_after_final_fit'] = None
+            candidate['status'] = 'design_limits_exceeded_before_final_refit'
+            write_relocation_report(snapshot, candidate)
+            connection.close()
+            raise ValueError('Relocation exceeds predeclared design limits; inspect relocation_audit.json and review split strategy. Revision not frozen.')
     else:
         raise ValueError('Precision collision audit did not converge; snapshot not frozen')
+    relocation = relocation_audit(initial_memberships, memberships, labels,
+                                  max_relocated_fraction, max_class_prevalence_change)
+    relocation['precision_cross_split_groups_after_final_fit'] = 0
+    relocation['status'] = 'passed'
+    write_relocation_report(snapshot, relocation)
+    if not relocation['quality_gate_passed']:
+        connection.close()
+        raise ValueError('Relocation exceeds predeclared design limits; revision not frozen')
+    bind(snapshot / 'relocation_audit.json')
+    bind(snapshot / 'relocation_audit.csv')
     for d in DOMAINS:
         for i, s in enumerate(SPLITS):
             destination = common_root / f'{d}_{s}'
@@ -151,6 +234,9 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve'):
         config = ROOT / 'configs' / f'{name}.json'
         if config.exists():
             bind(config)
+    policy_path = ROOT / 'configs/proposal_data_policy.json'
+    if policy_path.exists():
+        bind(policy_path)
     if 'split_replay' in audit:
         replay_path = Path(audit['split_replay']['path'])
         if file_sha256(replay_path) != audit['split_replay']['sha256']:
@@ -234,6 +320,8 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve'):
     quality_path.write_text(json.dumps(prepared_quality, indent=2) + '\n')
     bind(quality_path)
     manifest = {
+        'resources': resource_observation(started),
+        'relocation_audit': str((snapshot / 'relocation_audit.json').resolve()),
         'status': 'frozen', 'quality_gate_passed': True,
         'data_revision': revision, 'protocol': 'proposal_v2',
         'flow_counts_preserved': True,

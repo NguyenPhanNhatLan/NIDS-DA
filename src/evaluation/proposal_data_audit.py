@@ -122,8 +122,9 @@ def run(output, work_root, replay_path, raw_audit_path):
         replay = json.loads(replay_path.read_text())
         result['split_replay'] = {'path': str(replay_path.resolve()), 'sha256': sha256(replay_path), 'result': replay}
         result['quality_gate_passed'] &= all(
-            not any(replay[d]['new_split_bucket_mismatches'].values()) for d in DOMAINS
+            not any(replay[d]['split_bucket_mismatches'].values()) for d in DOMAINS
         )
+        result['quality_gate_passed'] &= replay.get('quality_gate_passed', False) and replay.get('engine', '').startswith('Spark native')
     else:
         result['quality_gate_passed'] = False
         result['split_replay_missing'] = True

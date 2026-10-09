@@ -52,5 +52,11 @@ def verify_revision():
             'data_manifest_sha256': file_sha256(manifest_path)}
 
 
+def require_development_open():
+    manifest = revision_manifest()
+    if manifest and (Path(manifest['result_root']) / 'development_lock.json').exists():
+        raise RuntimeError('Development is locked; do not retrain or overwrite protocol artifacts after locking')
+
+
 if __name__ == '__main__':
     print(json.dumps(verify_revision(), indent=2))

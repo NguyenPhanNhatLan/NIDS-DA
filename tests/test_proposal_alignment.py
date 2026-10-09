@@ -61,6 +61,17 @@ class ProposalAlignmentTests(unittest.TestCase):
                                        torch.zeros_like(target_logits), 0.9)
         self.assertEqual(float(zero.detach()), 0.0)
 
+    def test_class_aware_skips_normal_only_batch(self):
+        source = torch.randn(4, 5, requires_grad=True)
+        target = torch.randn(4, 5, requires_grad=True)
+        source_y = torch.tensor([0, 0, 1, 1])
+        logits = torch.tensor([[10., -10.]] * 4)
+        loss, bandwidth = class_aware_mmd_loss(source, source_y, target, logits, .8)
+        self.assertEqual(float(loss), 0.)
+        self.assertEqual(float(bandwidth), 0.)
+        loss.backward()
+        self.assertIsNotNone(source.grad)
+
     def test_pseudo_label_acceptance_counts_only_confident_predictions(self):
         logits = torch.tensor([[5.0, 0.0], [0.0, 5.0], [0.0, 0.0]])
         self.assertEqual(pseudo_label_counts(logits, 0.8), (2, 3, [1, 1]))

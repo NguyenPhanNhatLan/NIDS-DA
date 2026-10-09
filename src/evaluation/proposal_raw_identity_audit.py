@@ -1,5 +1,7 @@
 """Supplemental full-row duplicate and binary-label-conflict audit of ingested raw records."""
 import json
+import tempfile
+import time
 from pathlib import Path
 
 import duckdb
@@ -7,9 +9,13 @@ import pyarrow.parquet as pq
 
 from training.data_revision import file_sha256
 from evaluation.proposal_data_audit import sql_string, ROOT
+from training.resource_usage import resource_observation
 
 
 def run(output, work_root):
+    started = time.perf_counter()
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
     c = duckdb.connect()
     c.execute("SET threads=1")
     c.execute("SET memory_limit='1GB'")
@@ -35,14 +41,21 @@ def run(output, work_root):
         # Hash only partitions the work; equality remains exact across all columns.
         # Conflicting labels for the same identity always belong to the same bucket.
         unique_rows = conflict_groups = conflict_rows = 0
-        for bucket in range(64):
-            where = f'hash(row({nonlabels})) % 64 = {bucket}'
-            unique_rows += c.execute(f'SELECT count(*) FROM (SELECT DISTINCT {full} FROM raw_identity WHERE {where})').fetchone()[0]
-            groups, count = c.execute(
-                f'SELECT count(*),coalesce(sum(n),0) FROM (SELECT {nonlabels},count(*) n FROM raw_identity WHERE {where} GROUP BY {nonlabels} HAVING count(distinct {label})>1)'
-            ).fetchone()
-            conflict_groups += groups
-            conflict_rows += count
+        with tempfile.TemporaryDirectory(prefix=f'raw-audit-{d}-', dir=output.parent) as scratch:
+            partition_root = Path(scratch) / 'partitioned'
+            c.execute(f'COPY (SELECT {full}, hash(row({nonlabels})) % 64 AS audit_bucket FROM raw_identity) '
+                      f'TO {sql_string(partition_root)} (FORMAT PARQUET, PARTITION_BY(audit_bucket), COMPRESSION ZSTD)')
+            for bucket in range(64):
+                partition = partition_root / f'audit_bucket={bucket}'
+                if not list(partition.glob('*.parquet')):
+                    continue
+                c.execute(f'CREATE OR REPLACE TEMP VIEW partition_rows AS SELECT {full} FROM read_parquet({sql_string(partition / "*.parquet")})')
+                unique_rows += c.execute(f'SELECT count(*) FROM (SELECT DISTINCT {full} FROM partition_rows)').fetchone()[0]
+                groups, count = c.execute(
+                    f'SELECT count(*),coalesce(sum(n),0) FROM (SELECT {nonlabels},count(*) n FROM partition_rows GROUP BY {nonlabels} HAVING count(distinct {label})>1)'
+                ).fetchone()
+                conflict_groups += groups
+                conflict_rows += count
         csv_rows = sum(c.execute(f'SELECT count(*) FROM read_csv({sql_string(ROOT / p)}, header=true, all_varchar=true, sample_size=20480)').fetchone()[0]
                        for p in manifest['raw_inputs'][d])
         result['domains'][d] = {
@@ -61,6 +74,8 @@ def run(output, work_root):
         d['manifest_counts_match'] and d['csv_ingested_counts_match'] and not d['invalid_binary_labels']
         for d in result['domains'].values()
     )
+    result['resources'] = resource_observation(started)
+    result['partitioning'] = 'Compute identity bucket once; audit disk Parquet partitions; hash partitions work, equality remains exact'
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + '\n')

@@ -45,14 +45,20 @@ class IntrinsicShiftTests(unittest.TestCase):
         rng = np.random.default_rng(11)
         u = np.repeat(rng.normal(size=(100, 5)), 3, axis=0)
         c = np.repeat(rng.normal(3, 1, size=(100, 5)), 3, axis=0)
-        result, indices = diagnostic.intrinsic_auc(u, c)
+        result, indices = diagnostic.domain_auc_cv(u, c)
         x = np.concatenate([u, c])
-        train = {tuple(row) for row in x[indices['train']]}
-        test = {tuple(row) for row in x[indices['test']]}
-        self.assertFalse(train & test)
+        tests = []
+        for fold in range(5):
+            train = {tuple(row) for row in x[indices[f'fold{fold}_train']]}
+            test = {tuple(row) for row in x[indices[f'fold{fold}_test']]}
+            self.assertFalse(train & test)
+            tests.extend(indices[f'fold{fold}_test'].tolist())
+        self.assertEqual(sorted(tests), list(range(len(x))))
         self.assertEqual(result['duplicate_groups_overlap'], 0)
-        self.assertGreater(result['auc'], .9)
-        self.assertTrue(all(n > 0 for n in result['test_domain_counts']))
+        self.assertGreater(result['auc_mean'], .9)
+        self.assertEqual(len(result['auc_folds']), 5)
+        self.assertTrue(all(n > 0 for detail in result['fold_details'] for n in detail['test_domain_counts']))
+        self.assertEqual(result, diagnostic.compute_domain_auc(u, c))
 
     def test_pipeline_artifacts_and_output_guard(self):
         rng = np.random.default_rng(1)

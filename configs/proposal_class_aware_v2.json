@@ -8,7 +8,8 @@
     "kernel": "single_rbf",
     "bandwidth": "median_heuristic_per_class_batch",
     "estimator": "biased",
-    "target_pseudo_label_confidence": 0.8
+    "target_pseudo_label_confidence": 0.8,
+    "missing_class_policy": "skip_batch"
   },
   "training": {
     "batch_size": 256,
