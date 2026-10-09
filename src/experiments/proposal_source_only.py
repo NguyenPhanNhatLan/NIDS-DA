@@ -42,13 +42,15 @@ def count_classes(loader):
     return counts.tolist()
 
 
-def run(direction, seed=42):
+def run(direction, seed=42, overwrite=False):
     source, target = domains(direction)
     checkpoint_path = CHECKPOINT_ROOT / direction / f"seed{seed}.pt"
     result_path = RESULT_ROOT / direction / f"seed{seed}.json"
     for path in (checkpoint_path, result_path):
-        if path.exists():
-            raise FileExistsError(f"Output already exists: {path}")
+        if path.exists() and not overwrite:
+            raise FileExistsError(
+                f"Output already exists: {path}. Use --overwrite to rerun this seed."
+            )
     base = ROOT / "data/features/proposal_v2" / direction
     set_seed(seed)
     device = torch.device(
@@ -127,7 +129,7 @@ def run(direction, seed=42):
         **provenance,
     }
     result["checkpoint"] = str(checkpoint_path)
-    with result_path.open("x", encoding="utf-8") as stream:
+    with result_path.open("w" if overwrite else "x", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
     print(f"Saved source checkpoint: {checkpoint_path}")
@@ -141,8 +143,12 @@ def main():
         "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Rerun and replace existing checkpoint and result for this direction/seed.",
+    )
     args = parser.parse_args()
-    print(json.dumps(run(args.direction, args.seed), indent=2, allow_nan=True))
+    print(json.dumps(run(args.direction, args.seed, overwrite=args.overwrite), indent=2, allow_nan=True))
 
 
 if __name__ == "__main__":

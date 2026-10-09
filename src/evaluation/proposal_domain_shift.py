@@ -13,12 +13,17 @@ from scipy.stats import ks_2samp
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import (
     StratifiedKFold,
+    StratifiedGroupKFold,
     cross_val_score,
 )
+from sklearn.metrics import roc_auc_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import RobustScaler
+from sklearn.impute import SimpleImputer
 
 from features.common_features import COMMON_FEATURES
 from features.parquet_vectors import vector_matrix
-from training.adaptation import mmd_loss
+from training.adaptation import mmd_loss, estimate_bandwidth_squared, rbf_kernel
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -84,6 +89,8 @@ def sample_features(
     directory,
     max_samples,
     seed,
+    allow_nonfinite=False,
+    return_indices=False,
 ):
     files = parquet_files(directory)
 
@@ -122,15 +129,13 @@ def sample_features(
     for path in files:
 
         with pq.ParquetFile(path) as parquet:
-
+            scalar_columns = set(COMMON_FEATURES).issubset(parquet.schema_arrow.names)
+            columns = list(COMMON_FEATURES) if scalar_columns else ["features"]
             for batch in parquet.iter_batches(
                 batch_size=65536,
-                columns=["features"],
+                columns=columns,
             ):
-
-                features = batch.column("features")
-
-                n_rows = len(features)
+                n_rows = batch.num_rows
 
                 batch_start = global_offset
                 batch_end = global_offset + n_rows
@@ -151,7 +156,14 @@ def sample_features(
 
                     local_indices = selected[left:right] - batch_start
 
-                    matrix = vector_matrix(features, path)
+                    if scalar_columns:
+                        matrix = np.column_stack([
+                            batch.column(name).to_numpy(zero_copy_only=False)
+                            for name in COMMON_FEATURES
+                        ])
+                    else:
+                        matrix = vector_matrix(batch.column("features"), path,
+                                               allow_nonfinite=allow_nonfinite)
 
                     output.append(
                         matrix[local_indices].astype(
@@ -188,9 +200,11 @@ def sample_features(
             f"{result.shape[1]}"
         )
 
-    if not np.isfinite(result).all():
+    if not allow_nonfinite and not np.isfinite(result).all():
         raise ValueError(f"NaN/Inf found in {directory}")
 
+    if return_indices:
+        return result, total_rows, selected
     return result, total_rows
 
 
@@ -593,6 +607,167 @@ def run(
 # =========================================================
 
 
+def fixed_kernel_mmd(source, target, bandwidth_squared):
+    """Evaluate one fixed kernel, including unequal sample sizes."""
+    return (rbf_kernel(source, source, bandwidth_squared).mean()
+            + rbf_kernel(target, target, bandwidth_squared).mean()
+            - 2 * rbf_kernel(source, target, bandwidth_squared).mean())
+
+
+def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42):
+    # Float64 and a rounding-scale tolerance, rather than sampling tolerance.
+    epsilon = 64 * np.finfo(np.float64).eps
+    n = min(sample_size, len(source) // 2, len(target) // 2)
+    if n < 2 or repeats < 1:
+        raise ValueError("Intrinsic MMD needs >=4 rows/domain and >=1 repeat")
+    rng_u = np.random.default_rng(seed)
+    rng_c = np.random.default_rng(seed + 1)
+    records, indices = [], {}
+    with torch.no_grad():
+        for repeat in range(repeats):
+            ui = rng_u.choice(len(source), 2 * n, replace=False)
+            ci = rng_c.choice(len(target), 2 * n, replace=False)
+            indices[f"unsw_repeat{repeat}"] = ui
+            indices[f"cicids_repeat{repeat}"] = ci
+            u, u_control = torch.from_numpy(source[ui]).double().split(n)
+            c, c_control = torch.from_numpy(target[ci]).double().split(n)
+            bandwidth = estimate_bandwidth_squared(u, c)
+            forward = float(fixed_kernel_mmd(u, c, bandwidth))
+            reverse = float(fixed_kernel_mmd(c, u, bandwidth))
+            difference = abs(forward - reverse)
+            if difference >= epsilon:
+                raise AssertionError(f"MMD symmetry failed: {difference} >= {epsilon}")
+            records.append({
+                "unsw_to_cicids": forward, "cicids_to_unsw": reverse,
+                "absolute_symmetry_error": difference,
+                "bandwidth_squared": float(bandwidth),
+                "unsw_same_domain": float(fixed_kernel_mmd(u, u_control, bandwidth)),
+                "cicids_same_domain": float(fixed_kernel_mmd(c, c_control, bandwidth)),
+                "identical_sample_mmd2": float(fixed_kernel_mmd(u, u, bandwidth)),
+            })
+    values = np.array([r["unsw_to_cicids"] for r in records])
+    return {
+        "estimator": "biased empirical single-RBF MMD squared",
+        "sample_size_per_domain": n, "repeats": repeats,
+        "mmd2_mean": float(values.mean()),
+        "mmd2_std": float(values.std(ddof=1)) if repeats > 1 else 0.0,
+        "std_interpretation": "subsampling variability; not a 95% confidence interval",
+        "symmetry_epsilon": epsilon, "symmetry_passed": True,
+        "runs": records,
+    }, indices
+
+
+def intrinsic_auc(source, target, seed=42):
+    """Held-out domain AUC; identical feature vectors stay in one partition."""
+    x = np.concatenate([source, target])
+    y = np.concatenate([np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)])
+    # Treat identical vectors (including missing-value locations) as one group.
+    canonical = np.where(np.isfinite(x), x, np.nan)
+    keys = np.ascontiguousarray(canonical).view(
+        np.dtype((np.void, canonical.dtype.itemsize * canonical.shape[1]))
+    ).ravel()
+    _, groups = np.unique(keys, return_inverse=True)
+    cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=seed)
+    train, test = next(cv.split(x, y, groups))
+    if np.intersect1d(groups[train], groups[test]).size:
+        raise AssertionError("Duplicate feature vectors overlap train/test")
+    if len(np.unique(y[train])) != 2 or len(np.unique(y[test])) != 2:
+        raise ValueError("Not enough distinct groups for a two-domain held-out split")
+    # Fit all preprocessing only on the classifier's training partition.
+    model = make_pipeline(
+        SimpleImputer(strategy="median", keep_empty_features=True),
+        RobustScaler(), LogisticRegression(max_iter=1000, random_state=seed),
+    )
+    model.fit(x[train], y[train])
+    score = roc_auc_score(y[test], model.predict_proba(x[test])[:, 1])
+    return {
+        "auc": float(score), "split": "first fold of 5-fold stratified group split (~80/20)",
+        "grouping": "identical feature vectors; no overlap between train/test",
+        "train_domain_counts": np.bincount(y[train], minlength=2).tolist(),
+        "test_domain_counts": np.bincount(y[test], minlength=2).tolist(),
+        "duplicate_groups_overlap": 0,
+        "preprocessing_fit": "classifier training partition only",
+    }, {"train": train, "test": test}
+
+
+def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
+                  mmd_sample=2048, mmd_repeats=5, overwrite=False):
+    """Diagnostic only: canonical raw training samples, shared pooled transform."""
+    from models.proposal_pipeline import signed_log1p
+    raw_root = Path(raw_root)
+    output_dir = RESULT_ROOT / "intrinsic" / f"seed{seed}"
+    if output_dir.exists() and not overwrite:
+        raise FileExistsError(f"Result exists: {output_dir}. Use --overwrite to rerun.")
+    raw, totals, artifacts, provenance = {}, {}, {}, {}
+    for offset, domain in enumerate(("unsw", "cicids")):
+        path = raw_root / f"{domain}_train"
+        print(f"Sampling raw unlabeled training features: {path}", flush=True)
+        raw[domain], totals[domain], selected = sample_features(
+            path, analysis_sample, seed + offset,
+            allow_nonfinite=True, return_indices=True,
+        )
+        raw[domain] = np.where(np.isfinite(raw[domain]), raw[domain], np.nan)
+        artifacts[f"{domain}_raw"] = raw[domain]
+        artifacts[f"{domain}_selected_global_rows"] = selected
+        provenance[domain] = [
+            {"path": str(p.resolve()), "sha256": sha256(p)} for p in parquet_files(path)
+        ]
+    imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+    pooled = np.concatenate([raw["unsw"], raw["cicids"]])
+    logged = signed_log1p(imputer.fit_transform(pooled)).astype(np.float64)
+    scaler = RobustScaler().fit(logged)
+    transformed = scaler.transform(logged)
+    u, c = np.split(transformed, [len(raw["unsw"])])
+    print("Computing fixed-pair MMD and symmetry controls...", flush=True)
+    mmd, pairs = intrinsic_mmd(u, c, mmd_sample, mmd_repeats, seed)
+    artifacts.update(pairs)
+    artifacts.update(unsw_transformed=u, cicids_transformed=c)
+    # AUC sees common signed-log features; imputation/scaling fit inside holdout.
+    logged_raw = {d: signed_log1p(x).astype(np.float64) for d, x in raw.items()}
+    auc, auc_indices = intrinsic_auc(logged_raw["unsw"], logged_raw["cicids"], seed)
+    artifacts.update({f"domain_auc_{k}": v for k, v in auc_indices.items()})
+    controls = {}
+    for offset, domain in enumerate(("unsw", "cicids")):
+        permutation = np.random.default_rng(seed + 100 + offset).permutation(len(raw[domain]))
+        half = len(permutation) // 2
+        first, second = permutation[:half], permutation[half:]
+        controls[domain], split_indices = intrinsic_auc(
+            logged_raw[domain][first], logged_raw[domain][second], seed + offset,
+        )
+        artifacts[f"{domain}_auc_random_partition"] = permutation
+        artifacts.update({f"{domain}_control_auc_{k}": v for k, v in split_indices.items()})
+    result = {
+        "protocol": "proposal_v2", "analysis": "intrinsic_domain_shift_diagnostic",
+        "seed": seed, "features": list(COMMON_FEATURES),
+        "raw_root": str(raw_root.resolve()), "training_rows": totals,
+        "sample_rows": {d: len(x) for d, x in raw.items()},
+        "sampling": "fixed UNSW seed, CICIDS seed+1; without replacement; reused for both directions",
+        "intrusion_labels_used": False, "provenance": provenance,
+        "shared_transformation": {
+            "fit_role": "pooled unlabeled sampled training data; diagnostic only",
+            "steps": "median imputation -> signed_log1p -> RobustScaler",
+            "medians": imputer.statistics_.tolist(),
+            "centers": scaler.center_.tolist(), "scales": scaler.scale_.tolist(),
+        },
+        "input_mmd": mmd, "ks_by_feature": compute_ks(u, c),
+        "domain_classifier": auc, "same_domain_auc_controls": controls,
+        "control_interpretation": "independent same-domain biased MMD need not equal zero; random-partition AUC should be near 0.5, without a hard pass threshold",
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    samples_path = output_dir / "samples.npz"
+    np.savez_compressed(samples_path, **artifacts)
+    result["sample_artifact"] = str(samples_path.resolve())
+    result["sample_artifact_sha256"] = sha256(samples_path)
+    output = output_dir / "result.json"
+    with output.open("w", encoding="utf-8") as stream:
+        json.dump(result, stream, indent=2, allow_nan=False)
+        stream.write("\n")
+    print(f"MMD² = {mmd['mmd2_mean']:.6f} ± {mmd['mmd2_std']:.6f} (subsampling std, not 95% CI)")
+    print(f"Symmetry passed (epsilon={mmd['symmetry_epsilon']:.3g}); held-out AUC={auc['auc']:.6f}")
+    print(f"Saved: {output}")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=("Pre-adaptation domain shift " "diagnostics for proposal suite.")
@@ -600,13 +775,17 @@ def main():
 
     parser.add_argument(
         "--direction",
-        required=True,
+        default="both",
         choices=[
             "unsw_to_cicids",
             "cicids_to_unsw",
             "both",
         ],
     )
+    parser.add_argument("--mode", choices=["directional", "intrinsic"], default="directional")
+    parser.add_argument("--raw-root", type=Path, default=ROOT / "data/bigdata/thesis_20261005/common",
+                        help="Canonical unscaled common-feature training Parquets for intrinsic mode.")
+    parser.add_argument("--overwrite", action="store_true", help="Replace intrinsic diagnostic artifacts.")
 
     parser.add_argument(
         "--seed",
@@ -652,6 +831,11 @@ def main():
 
     if args.cv_folds < 2:
         parser.error("cv-folds must be >= 2")
+
+    if args.mode == "intrinsic":
+        run_intrinsic(args.raw_root, args.seed, args.analysis_sample,
+                      args.mmd_sample, args.mmd_repeats, args.overwrite)
+        return
 
     if args.direction == "both":
 

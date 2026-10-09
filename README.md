@@ -159,6 +159,31 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 Xem [protocol](docs/thesis_protocol.md), [manifest](docs/experiment_manifest.md),
 [data dictionary](docs/data_dictionary/) và [mapping audit](docs/feature_mapping_audit.csv).
 
+Đo intrinsic domain shift bằng đối chứng riêng, không thay preprocessing training:
+
+```bash
+python -m evaluation.proposal_domain_shift --mode intrinsic \
+  --raw-root data/bigdata/thesis_20261005/common \
+  --seed 42 --analysis-sample 100000 --mmd-sample 2048 --mmd-repeats 5
+```
+
+Nguồn phải là common-feature train **chưa scale**, gồm 5 cột canonical hoặc vector
+5 phần tử; không dùng các thư mục prepared theo direction. Chỉ đọc features,
+không đọc intrusion labels. Lưu mẫu 100,000 flow/domain (hoặc toàn bộ nếu ít hơn),
+chỉ số dòng, các cặp mẫu MMD và partition AUC trong
+`results/proposal_v2/domain_shift/intrinsic/seed42/samples.npz`, cùng `result.json`.
+Mẫu được chọn theo dataset và dùng lại khi hoán đổi chiều. Median/log/RobustScaler
+chung được fit trên pooled unlabeled training sample, chỉ phục vụ diagnostic.
+Mỗi lần lặp giữ cùng bandwidth cho hai chiều và các đối chứng cùng-domain;
+kiểm tra đối xứng bằng float64 với epsilon = 64 × machine epsilon (~1.42e-14).
+
+AUC dùng holdout khoảng 80/20 phân tầng theo domain và gom các vector giống hệt
+nhau trong cùng partition, preprocessing classifier chỉ fit trên train partition.
+Đối chứng cùng-domain dùng hai nhóm ngẫu nhiên không trùng dòng: MMD biased không
+bắt buộc bằng 0, AUC kỳ vọng gần 0.5; các giá trị này được báo để inspect, không
+áp một ngưỡng pass tùy ý. `mmd2_std` là độ biến thiên giữa các lần subsampling,
+**không phải CI 95%**. Chạy lại bằng `--overwrite` để thay artifact diagnostic.
+
 Interface Research → BI nằm ở `src/analytics/build_dashboard_tables.py`:
 
 ```bash
