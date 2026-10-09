@@ -158,7 +158,13 @@ def run(direction, method, seed=42):
     revision = verify_revision()
     if revision:
         from evaluation.proposal_development_lock import require_development_lock
-        require_development_lock(revision)
+        lock = require_development_lock(revision)
+        locked_runs = {
+            (row['direction'], row['method'], row['seed'])
+            for row in lock['matrix']
+        }
+        if (direction, method, seed) not in locked_runs:
+            raise ValueError('Requested final-test run is not in locked development matrix')
     output = OUTPUT_ROOT / method / direction / f'seed{seed}.json'
     if output.exists():
         raise FileExistsError(f'Final-test result already exists: {output}')

@@ -57,10 +57,45 @@ def select_revision():
     return revision
 
 
+def verify_input_row_counts():
+    """Fail before diagnostics/training if prepared splits don't match common inputs.
+
+    The source-only and adaptation models use different fitted scalers in opposite
+    directions, but must still contain the same flow counts for each domain/split.
+    Frozen hashes protect content; this makes the expected count relation explicit.
+    """
+    import pyarrow.parquet as pq
+    from training.data_revision import revision_path
+
+    common_root = revision_path("common_root", None)
+    prepared_root = revision_path("feature_root", None)
+
+    def rows(directory):
+        files = sorted(directory.glob("*.parquet"))
+        if not files:
+            raise FileNotFoundError(f"Missing Parquet input: {directory}")
+        return sum(pq.ParquetFile(path).metadata.num_rows for path in files)
+
+    for domain in ("unsw", "cicids"):
+        for split in ("train", "val", "test"):
+            expected = rows(common_root / f"{domain}_{split}")
+            if expected == 0:
+                raise ValueError(f"Empty canonical split: {domain}_{split}")
+            for direction in DIRECTIONS:
+                actual = rows(prepared_root / direction / f"{domain}_{split}")
+                if actual != expected:
+                    raise ValueError(
+                        f"Inconsistent inputs: {direction}/{domain}_{split} "
+                        f"has {actual:,} rows; common split has {expected:,}"
+                    )
+    print("Canonical/common and both directional prepared row counts match.")
+
+
 def diagnostics():
     from evaluation.proposal_domain_shift import run_intrinsic, run
     from training.data_revision import revision_path
 
+    verify_input_row_counts()
     run_intrinsic(revision_path("common_root", None), seed=42)
     for direction in DIRECTIONS:
         run(direction, seed=42)
@@ -70,11 +105,51 @@ def train():
     from experiments.proposal_source_only import run as source_only
     from training.proposal_mmd import run as adapted
 
+    verify_input_row_counts()
     for direction in DIRECTIONS:
         for seed in SEEDS:
             source_only(direction, seed)
             for config in CONFIGS:
                 adapted(direction, seed, ROOT / "configs" / f"{config}.json")
+
+
+def resume_train():
+    """Continue an interrupted suite without overwriting or trusting stale runs.
+
+    Existing checkpoint/result pairs are replay-validated before being skipped.
+    Missing pairs are generated; half-written pairs fail closed for manual review.
+    """
+    from evaluation.proposal_final_test import paths, validate_development
+    from experiments.proposal_source_only import run as source_only
+    from training.proposal_mmd import run as adapted
+    from training.data_revision import require_development_open
+
+    require_development_open()
+    verify_input_row_counts()
+    methods = [("source_only", None)]
+    for config in CONFIGS:
+        config_path = ROOT / "configs" / f"{config}.json"
+        method = json.loads(config_path.read_text())["method"]
+        if method not in SUITE["methods"] or method == "source_only":
+            raise ValueError(f"Unexpected method in resume config: {config_path}")
+        methods.append((method, config_path))
+
+    for direction in DIRECTIONS:
+        for seed in SEEDS:
+            for method, config_path in methods:
+                checkpoint, result = paths(method, direction, seed)
+                if checkpoint.exists() != result.exists():
+                    raise RuntimeError(
+                        f"Incomplete {method} artifacts for {direction}/seed{seed}: "
+                        f"{checkpoint}, {result}. Inspect the failed run; never auto-overwrite."
+                    )
+                if checkpoint.exists():
+                    validate_development(direction, method, seed)
+                    print(f"Validated and reused: {method} {direction} seed{seed}")
+                elif method == "source_only":
+                    source_only(direction, seed)
+                else:
+                    adapted(direction, seed, config_path)
 
 
 def aggregate():
@@ -127,6 +202,7 @@ def main():
             "verify",
             "diagnostics",
             "train",
+            "resume-train",
             "evaluation",
             "aggregate",
             "lock-development",
@@ -145,6 +221,7 @@ def main():
         {
             "diagnostics": diagnostics,
             "train": train,
+            "resume-train": resume_train,
             "evaluation": evaluation,
             "aggregate": aggregate,
             "lock-development": lock_development,
