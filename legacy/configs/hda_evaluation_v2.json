@@ -1,9 +1,0 @@
-{
-  "evaluation_id": "hda_eval_v2_purity",
-  "training_protocol_sha256": "17ba48649eb716e40e79dc92400db502b9e8b7d1e84b07d88082090be6a38708",
-  "description": "Development-only pseudo-label purity by margin quantile; source-threshold reported metrics unchanged.",
-  "code_sha256": {
-    "src/evaluation/hda.py": "4cd9b813529c71b505f933f1909a207d9adfcd0acab02e1ad15d51766b06f494",
-    "src/evaluation/protocol_revision.py": "39299b401c4793cb9897bca8707924dfb8bd27e5e14982e9517b74294cca56e8"
-  }
-}

@@ -1,9 +1,0 @@
-{
-  "evaluation_id": "hda_eval_v1_dev_oracle",
-  "training_protocol_sha256": "17ba48649eb716e40e79dc92400db502b9e8b7d1e84b07d88082090be6a38708",
-  "description": "Development oracle requires explicit protocol; reported metrics retain source threshold.",
-  "code_sha256": {
-    "src/evaluation/hda.py": "3a3e8c91c39306ff71354cd0652d3d5330b79aa9c60e292c90a887a6ecc435f1",
-    "src/evaluation/protocol_revision.py": "39299b401c4793cb9897bca8707924dfb8bd27e5e14982e9517b74294cca56e8"
-  }
-}
