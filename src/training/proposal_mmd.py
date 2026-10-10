@@ -20,11 +20,19 @@ from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.adaptation import mmd_loss
 from training.baseline import set_seed
-from training.proposal_class_aware import audit_pseudo_labels, class_aware_mmd_loss, class_aware_batch_stats
+from training.proposal_class_aware import (
+    audit_pseudo_labels,
+    class_aware_mmd_loss,
+    class_aware_batch_stats,
+)
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mkmmd import multi_kernel_mmd_loss
 
-from training.data_revision import revision_path, verify_revision, require_development_open
+from training.data_revision import (
+    revision_path,
+    verify_revision,
+    require_development_open,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,14 +40,19 @@ DEFAULT_CONFIG = ROOT / "configs" / "proposal_mmd_v2.json"
 
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
-FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
+FEATURE_ROOT = revision_path("feature_root", ROOT / "data/features/proposal_v2")
 
-MODEL_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'mmd'
+MODEL_ROOT = revision_path("model_root", ROOT / "models/proposal_v2") / "mmd"
 
-RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'mmd'
+RESULT_ROOT = revision_path("result_root", ROOT / "results/proposal_v2") / "mmd"
 
-SOURCE_ONLY_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'source_only_target_val'
-SOURCE_CHECKPOINT_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'source_only_target_val'
+SOURCE_ONLY_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2")
+    / "source_only_target_val"
+)
+SOURCE_CHECKPOINT_ROOT = (
+    revision_path("model_root", ROOT / "models/proposal_v2") / "source_only_target_val"
+)
 
 
 def output_paths(direction, seed, config_path):
@@ -91,13 +104,20 @@ def load_config(path):
         raise ValueError("MK-MMD requires bandwidth scales")
 
     if config["method"] == "class_aware_mmd":
-        if config['mmd'].get('missing_class_policy') != 'skip_batch':
-            raise ValueError('Class-aware policy must be explicitly frozen as skip_batch')
+        if config["mmd"].get("missing_class_policy") != "skip_batch":
+            raise ValueError(
+                "Class-aware policy must be explicitly frozen as skip_batch"
+            )
         confidence = config["mmd"].get("target_pseudo_label_confidence")
         if confidence is None or not 0 <= confidence <= 1:
-            raise ValueError("Class-aware MMD requires pseudo-label confidence in [0, 1]")
+            raise ValueError(
+                "Class-aware MMD requires pseudo-label confidence in [0, 1]"
+            )
 
-    if config.get("protocol") != "proposal_v2" or config.get("common_feature_config") != "configs/common_features_v2.json":
+    if (
+        config.get("protocol") != "proposal_v2"
+        or config.get("common_feature_config") != "configs/common_features_v2.json"
+    ):
         raise ValueError("Only proposal_v2 with common_features_v2.json is supported")
 
     return config
@@ -155,6 +175,7 @@ def count_classes(
 
     return counts.tolist()
 
+
 def train_mmd(
     model,
     counts,
@@ -200,15 +221,17 @@ def train_mmd(
 
     epochs_without_improvement = 0
 
-    history = [{
-        "epoch": 0,
-        "loss": None,
-        "source_ce": None,
-        "mmd2": None,
-        "bandwidth": None,
-        "source_val_ap": best_ap,
-        "stage": "source_pretrained",
-    }]
+    history = [
+        {
+            "epoch": 0,
+            "loss": None,
+            "source_ce": None,
+            "mmd2": None,
+            "bandwidth": None,
+            "source_val_ap": best_ap,
+            "stage": "source_pretrained",
+        }
+    ]
     if method == "class_aware_mmd":
         history[0]["pseudo_label_acceptance"] = None
     print(f"Epoch 000 | Source pretrained | Val AP={best_ap:.6f}")
@@ -232,7 +255,7 @@ def train_mmd(
         accepted_per_class = [0, 0]
         predicted_per_class = [0, 0]
         both_classes_eligible_batches = aligned_batches = 0
-        eligibility_batches = {'none': 0, 'normal_only': 0, 'attack_only': 0, 'both': 0}
+        eligibility_batches = {"none": 0, "normal_only": 0, "attack_only": 0, "both": 0}
 
         steps = 0
 
@@ -265,7 +288,6 @@ def train_mmd(
 
             batch_size = len(source_x)
 
-
             combined_x = torch.cat(
                 [
                     source_x,
@@ -287,18 +309,34 @@ def train_mmd(
             target_logits = combined_logits[batch_size:]
 
             if method == "class_aware_mmd":
-                stats = class_aware_batch_stats(source_y, target_logits, config['mmd']['target_pseudo_label_confidence'])
-                per_class = stats['accepted_per_class']
-                accepted, seen = sum(per_class), sum(stats['predicted_per_class'])
+                stats = class_aware_batch_stats(
+                    source_y,
+                    target_logits,
+                    config["mmd"]["target_pseudo_label_confidence"],
+                )
+                per_class = stats["accepted_per_class"]
+                accepted, seen = sum(per_class), sum(stats["predicted_per_class"])
                 accepted_total += accepted
                 target_total += seen
                 accepted_per_class[0] += per_class[0]
                 accepted_per_class[1] += per_class[1]
-                predicted_per_class = [a + b for a, b in zip(predicted_per_class, stats['predicted_per_class'])]
-                key = {(): 'none', (0,): 'normal_only', (1,): 'attack_only', (0, 1): 'both'}[tuple(stats['eligible_classes'])]
+                predicted_per_class = [
+                    a + b
+                    for a, b in zip(predicted_per_class, stats["predicted_per_class"])
+                ]
+                key = {
+                    (): "none",
+                    (0,): "normal_only",
+                    (1,): "attack_only",
+                    (0, 1): "both",
+                }[tuple(stats["eligible_classes"])]
                 eligibility_batches[key] += 1
-                both_classes_eligible_batches += int(len(stats['eligible_classes']) == 2)
-                aligned_batches += int(lambda_mmd > 0 and len(stats['active_classes']) == 2)
+                both_classes_eligible_batches += int(
+                    len(stats["eligible_classes"]) == 2
+                )
+                aligned_batches += int(
+                    lambda_mmd > 0 and len(stats["active_classes"]) == 2
+                )
 
             # ------------------------------------------------
             # Source supervised loss
@@ -322,7 +360,10 @@ def train_mmd(
                 )
             elif method == "class_aware_mmd":
                 alignment_loss, bandwidth = class_aware_mmd_loss(
-                    source_z, source_y, target_z, target_logits,
+                    source_z,
+                    source_y,
+                    target_z,
+                    target_logits,
                     config["mmd"]["target_pseudo_label_confidence"],
                 )
             else:
@@ -378,21 +419,24 @@ def train_mmd(
                 "rate": accepted_total / target_total,
                 "accepted_per_class": accepted_per_class,
                 "predicted_per_class": predicted_per_class,
-                "acceptance_rate_per_predicted_class": [a / n if n else None for a, n in zip(accepted_per_class, predicted_per_class)],
+                "acceptance_rate_per_predicted_class": [
+                    a / n if n else None
+                    for a, n in zip(accepted_per_class, predicted_per_class)
+                ],
             }
-            row['class_aware_alignment'] = {
-                'missing_class_policy': 'skip_batch',
-                'active_classes': [0, 1] if aligned_batches else [],
-                'eligible_batch_counts': eligibility_batches,
-                'both_classes_eligible_batches': both_classes_eligible_batches,
-                'aligned_batches': aligned_batches,
-                'skipped_batches': steps - aligned_batches,
-                'aligned_batches_per_class': [aligned_batches, aligned_batches],
+            row["class_aware_alignment"] = {
+                "missing_class_policy": "skip_batch",
+                "active_classes": [0, 1] if aligned_batches else [],
+                "eligible_batch_counts": eligibility_batches,
+                "both_classes_eligible_batches": both_classes_eligible_batches,
+                "aligned_batches": aligned_batches,
+                "skipped_batches": steps - aligned_batches,
+                "aligned_batches_per_class": [aligned_batches, aligned_batches],
             }
 
         history.append(row)
 
-        print(
+        print(         
             f"Epoch "
             f"{epoch:03d} | "
             f"Loss="
@@ -405,8 +449,10 @@ def train_mmd(
             f"{val_ap:.6f}"
         )
         if method == "class_aware_mmd":
-            print(f"  Pseudo-label acceptance: {accepted_total}/{target_total} "
-                  f"({accepted_total / target_total:.2%}); class 0/1={accepted_per_class}")
+            print(
+                f"  Pseudo-label acceptance: {accepted_total}/{target_total} "
+                f"({accepted_total / target_total:.2%}); class 0/1={accepted_per_class}"
+            )
 
         improvement = val_ap - best_ap
 
@@ -466,6 +512,7 @@ def evaluate_split(
         threshold,
     )
 
+
 def run(
     direction,
     seed=42,
@@ -496,7 +543,7 @@ def run(
     target_train_path = base / f"{target}_train"
 
     target_development_path = base / f"{target}_val"
-    
+
     source_only_path = SOURCE_ONLY_ROOT / direction / f"seed{seed}.json"
     source_checkpoint_path = SOURCE_CHECKPOINT_ROOT / direction / f"seed{seed}.pt"
 
@@ -505,7 +552,9 @@ def run(
             "Run proposal source-only " "baseline first: " f"{source_only_path}"
         )
     if not source_checkpoint_path.exists():
-        raise FileNotFoundError(f"Run proposal source-only first: {source_checkpoint_path}")
+        raise FileNotFoundError(
+            f"Run proposal source-only first: {source_checkpoint_path}"
+        )
 
     source_only = json.loads(source_only_path.read_text())
 
@@ -518,7 +567,9 @@ def run(
     ):
         raise ValueError("Source-only reference " "does not match MMD run")
 
-    source_checkpoint = torch.load(source_checkpoint_path, map_location="cpu", weights_only=True)
+    source_checkpoint = torch.load(
+        source_checkpoint_path, map_location="cpu", weights_only=True
+    )
     if (
         source_checkpoint["direction"] != direction
         or source_checkpoint["seed"] != seed
@@ -526,9 +577,16 @@ def run(
         or source_checkpoint["features"] != list(COMMON_FEATURES)
         or source_checkpoint["best_epoch"] != source_only["best_epoch"]
         or source_checkpoint["common_feature_config_sha256"] != sha256(COMMON_CONFIG)
-        or source_checkpoint["preprocessor_sha256"] != sha256(revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib')
-        or source_only["common_feature_config_sha256"] != source_checkpoint["common_feature_config_sha256"]
-        or source_only["preprocessor_sha256"] != source_checkpoint["preprocessor_sha256"]
+        or source_checkpoint["preprocessor_sha256"]
+        != sha256(
+            revision_path("model_root", ROOT / "models/proposal_v2")
+            / direction
+            / "preprocessor.joblib"
+        )
+        or source_only["common_feature_config_sha256"]
+        != source_checkpoint["common_feature_config_sha256"]
+        or source_only["preprocessor_sha256"]
+        != source_checkpoint["preprocessor_sha256"]
     ):
         raise ValueError("Source-only checkpoint does not match reference")
     current_splits = {
@@ -537,11 +595,11 @@ def run(
         "target_train": split_sha256(target_train_path),
         "target_val": split_sha256(target_development_path),
     }
-    if (source_checkpoint.get("prepared_split_sha256") != current_splits
-            or source_only.get("prepared_split_sha256") != current_splits):
+    if (
+        source_checkpoint.get("prepared_split_sha256") != current_splits
+        or source_only.get("prepared_split_sha256") != current_splits
+    ):
         raise ValueError("Prepared feature splits changed since source-only training")
-
-
 
     set_seed(seed)
 
@@ -572,13 +630,22 @@ def run(
     # --------------------------------------------------------
 
     source_loader = ParquetBatchStream(
-        source_train_path, config["training"]["batch_size"], True, seed, True, drop_last=True
+        source_train_path,
+        config["training"]["batch_size"],
+        True,
+        seed,
+        True,
+        drop_last=True,
     )
 
     # This loader reads FEATURES ONLY.
     target_loader = ParquetBatchStream(
-        target_train_path, config["training"]["batch_size"], True, seed + 1000,
-        False, drop_last=True,
+        target_train_path,
+        config["training"]["batch_size"],
+        True,
+        seed + 1000,
+        False,
+        drop_last=True,
     )
 
     source_val_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
@@ -688,7 +755,11 @@ def run(
             "config_sha256": sha256(config_path),
             "common_feature_config_sha256": sha256(COMMON_CONFIG),
             "history": history,
-            **({"source_only_pseudo_label_audit": pseudo_label_audit} if pseudo_label_audit else {}),
+            **(
+                {"source_only_pseudo_label_audit": pseudo_label_audit}
+                if pseudo_label_audit
+                else {}
+            ),
             "model_state_dict": {
                 key: value.detach().cpu() for key, value in model.state_dict().items()
             },
@@ -742,7 +813,11 @@ def run(
         "checkpoint": str(checkpoint_path),
         "config_sha256": sha256(config_path),
         "common_feature_config_sha256": sha256(COMMON_CONFIG),
-        **({"source_only_pseudo_label_audit": pseudo_label_audit} if pseudo_label_audit else {}),
+        **(
+            {"source_only_pseudo_label_audit": pseudo_label_audit}
+            if pseudo_label_audit
+            else {}
+        ),
     }
 
     output_dir = output_path.parent

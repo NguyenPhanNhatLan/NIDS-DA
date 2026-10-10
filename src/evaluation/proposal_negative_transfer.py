@@ -25,10 +25,18 @@ from training.proposal_mmd import freeze_bn_stats, output_paths
 from training.data_revision import revision_path, verify_revision
 
 ROOT = Path(__file__).resolve().parents[2]
-FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
-SOURCE_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'source_only_target_val'
-SOURCE_RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'source_only_target_val'
-OUTPUT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'diagnostics_target_val'
+FEATURE_ROOT = revision_path("feature_root", ROOT / "data/features/proposal_v2")
+SOURCE_ROOT = (
+    revision_path("model_root", ROOT / "models/proposal_v2") / "source_only_target_val"
+)
+SOURCE_RESULT_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2")
+    / "source_only_target_val"
+)
+OUTPUT_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2")
+    / "diagnostics_target_val"
+)
 EPS = 1e-12
 RULES = {
     "minimum_ap_drop": 0.01,
@@ -86,7 +94,9 @@ def load_models(direction, seed, config_path):
         )
     common_hash = sha256(ROOT / "configs/common_features_v2.json")
     preprocessor_hash = sha256(
-        revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib'
+        revision_path("model_root", ROOT / "models/proposal_v2")
+        / direction
+        / "preprocessor.joblib"
     )
     for artifact in (source_cp, adapted_cp, source_result, adapted_result):
         if (
@@ -492,8 +502,6 @@ def run(
         else f"seed{seed}_{config_path.stem}.json"
     )
     output = OUTPUT_ROOT / direction / filename
-    if output.exists():
-        raise FileExistsError(f"Diagnostic already exists: {output}")
     source_model, adapted_model, source_result, adapted_result, paths = load_models(
         direction, seed, config_path
     )
@@ -529,6 +537,27 @@ def run(
         adapted_result["threshold"],
         input_dim,
     )
+    from evaluation.proposal_score_diagnostic import score_diagnostics
+
+    score_analysis = {}
+
+    for name, evaluated, threshold in (
+        (
+            "before",
+            baseline_eval,
+            source_result["threshold_from_source_val"],
+        ),
+        (
+            "after",
+            adapted_eval,
+            adapted_result["threshold"],
+        ),
+    ):
+        score_analysis[name] = score_diagnostics(
+            evaluated["target_labels"],
+            evaluated["target_scores"],
+            threshold,
+        )
 
     if (
         abs(
@@ -691,6 +720,7 @@ def run(
                 and gradient["negative_fraction"] > RULES["gradient_negative_fraction"]
             ),
         },
+        "target_validation_score_analysis": score_analysis,
         "domain_separability": domain,
         "label_prior": prior,
         "batchnorm_shift": bn,
@@ -713,7 +743,7 @@ def run(
         },
     }
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as stream:
+    with output.open("w", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
     print_summary(result, output)
@@ -770,6 +800,25 @@ def print_summary(result, output):
             f"CE-only control | Target AP={control['target_development_ap']:.4f}, "
             f"MMD minus CE-only={control['mmd_minus_ce_only_ap']:+.4f}"
         )
+    analysis = result.get("target_validation_score_analysis")
+    if analysis:
+        print("\n=== Target validation score analysis ===")
+        for phase, scores in analysis.items():
+            metrics = scores["source_threshold_metrics"]
+            oracle = scores["oracle_f1_diagnostic_only"]
+            print(
+                f"{phase}: AP={scores['average_precision']:.4f}, "
+                f"ROC-AUC={scores['roc_auc']:.4f}, "
+                f"source threshold={metrics['threshold']:.4f}, "
+                f"recall={metrics['recall']:.4f}, FPR={metrics['fpr']:.4f}, "
+                f"F1={metrics['f1']:.4f}, validation oracle F1={oracle['f1']:.4f}"
+            )
+            for label, distribution in scores["score_distributions"].items():
+                print(
+                    f"  {label}: n={distribution['count']}, "
+                    f"median score={distribution['quantiles']['p50']:.4f}"
+                )
+        print("Full score distributions and PR curves are saved in the diagnostic JSON.")
     print(f"Saved: {output}")
 
 

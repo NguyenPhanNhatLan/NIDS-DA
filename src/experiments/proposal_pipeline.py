@@ -58,12 +58,6 @@ def select_revision():
 
 
 def verify_input_row_counts():
-    """Fail before diagnostics/training if prepared splits don't match common inputs.
-
-    The source-only and adaptation models use different fitted scalers in opposite
-    directions, but must still contain the same flow counts for each domain/split.
-    Frozen hashes protect content; this makes the expected count relation explicit.
-    """
     import pyarrow.parquet as pq
     from training.data_revision import revision_path
 
@@ -161,7 +155,7 @@ def aggregate():
     result = collect(DIRECTIONS, SEEDS)
     output = revision_path("result_root", None) / "aggregate/summary.json"
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as stream:
+    with output.open("w", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
     print(f"Saved: {output}")

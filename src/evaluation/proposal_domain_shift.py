@@ -25,9 +25,11 @@ from training.data_revision import revision_path, verify_revision
 
 ROOT = Path(__file__).resolve().parents[2]
 
-FEATURE_ROOT = revision_path('feature_root', ROOT / 'data/features/proposal_v2')
+FEATURE_ROOT = revision_path("feature_root", ROOT / "data/features/proposal_v2")
 
-RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'domain_shift'
+RESULT_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2") / "domain_shift"
+)
 
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
@@ -155,13 +157,18 @@ def sample_features(
                     local_indices = selected[left:right] - batch_start
 
                     if scalar_columns:
-                        matrix = np.column_stack([
-                            batch.column(name).to_numpy(zero_copy_only=False)
-                            for name in COMMON_FEATURES
-                        ])
+                        matrix = np.column_stack(
+                            [
+                                batch.column(name).to_numpy(zero_copy_only=False)
+                                for name in COMMON_FEATURES
+                            ]
+                        )
                     else:
-                        matrix = vector_matrix(batch.column("features"), path,
-                                               allow_nonfinite=allow_nonfinite)
+                        matrix = vector_matrix(
+                            batch.column("features"),
+                            path,
+                            allow_nonfinite=allow_nonfinite,
+                        )
 
                     output.append(
                         matrix[local_indices].astype(
@@ -438,7 +445,9 @@ def run(
     # ---------------------------------
 
     preprocessor_path = (
-        revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib'
+        revision_path("model_root", ROOT / "models/proposal_v2")
+        / direction
+        / "preprocessor.joblib"
     )
 
     if not preprocessor_path.exists():
@@ -553,13 +562,16 @@ def run(
 
 def fixed_kernel_mmd(source, target, bandwidth_squared):
     """Evaluate one fixed kernel, including unequal sample sizes."""
-    return (rbf_kernel(source, source, bandwidth_squared).mean()
-            + rbf_kernel(target, target, bandwidth_squared).mean()
-            - 2 * rbf_kernel(source, target, bandwidth_squared).mean())
+    return (
+        rbf_kernel(source, source, bandwidth_squared).mean()
+        + rbf_kernel(target, target, bandwidth_squared).mean()
+        - 2 * rbf_kernel(source, target, bandwidth_squared).mean()
+    )
 
 
-def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42,
-                  alternative_spaces=None):
+def intrinsic_mmd(
+    source, target, sample_size=2048, repeats=5, seed=42, alternative_spaces=None
+):
     # Float64 and a rounding-scale tolerance, rather than sampling tolerance.
     epsilon = 64 * np.finfo(np.float64).eps
     n = min(sample_size, len(source) // 2, len(target) // 2)
@@ -583,39 +595,55 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42,
             if difference >= epsilon:
                 raise AssertionError(f"MMD symmetry failed: {difference} >= {epsilon}")
             variants = {
-                'without_byte_features': (u[:, :3], c[:, :3]),
-                'without_duration': (u[:, 1:], c[:, 1:]),
+                "without_byte_features": (u[:, :3], c[:, :3]),
+                "without_duration": (u[:, 1:], c[:, 1:]),
             }
             for name, (a, b) in (alternative_spaces or {}).items():
-                variants[name] = (torch.from_numpy(a[ui[:n]]).double(),
-                                  torch.from_numpy(b[ci[:n]]).double())
+                variants[name] = (
+                    torch.from_numpy(a[ui[:n]]).double(),
+                    torch.from_numpy(b[ci[:n]]).double(),
+                )
             for name, (a, b) in variants.items():
                 sigma2 = estimate_bandwidth_squared(a, b)
                 value = float(fixed_kernel_mmd(a, b, sigma2))
                 sensitivities.setdefault(name, []).append(value)
             for sigma_multiplier in (0.5, 2.0):
-                value = float(fixed_kernel_mmd(u, c, bandwidth * sigma_multiplier ** 2))
-                sensitivities.setdefault(f'bandwidth_sigma_x{sigma_multiplier}', []).append(value)
-            records.append({
-                "unsw_to_cicids": forward, "cicids_to_unsw": reverse,
-                "absolute_symmetry_error": difference,
-                "bandwidth_squared": float(bandwidth),
-                "unsw_same_domain": float(fixed_kernel_mmd(u, u_control, bandwidth)),
-                "cicids_same_domain": float(fixed_kernel_mmd(c, c_control, bandwidth)),
-                "identical_sample_mmd2": float(fixed_kernel_mmd(u, u, bandwidth)),
-            })
+                value = float(fixed_kernel_mmd(u, c, bandwidth * sigma_multiplier**2))
+                sensitivities.setdefault(
+                    f"bandwidth_sigma_x{sigma_multiplier}", []
+                ).append(value)
+            records.append(
+                {
+                    "unsw_to_cicids": forward,
+                    "cicids_to_unsw": reverse,
+                    "absolute_symmetry_error": difference,
+                    "bandwidth_squared": float(bandwidth),
+                    "unsw_same_domain": float(
+                        fixed_kernel_mmd(u, u_control, bandwidth)
+                    ),
+                    "cicids_same_domain": float(
+                        fixed_kernel_mmd(c, c_control, bandwidth)
+                    ),
+                    "identical_sample_mmd2": float(fixed_kernel_mmd(u, u, bandwidth)),
+                }
+            )
     values = np.array([r["unsw_to_cicids"] for r in records])
     return {
         "estimator": "biased empirical single-RBF MMD squared",
-        "sample_size_per_domain": n, "repeats": repeats,
+        "sample_size_per_domain": n,
+        "repeats": repeats,
         "mmd2_mean": float(values.mean()),
         "mmd2_std": float(values.std(ddof=1)) if repeats > 1 else 0.0,
         "std_interpretation": "subsampling variability; not a 95% confidence interval",
-        "symmetry_epsilon": epsilon, "symmetry_passed": True,
+        "symmetry_epsilon": epsilon,
+        "symmetry_passed": True,
         "runs": records,
         "sensitivity": {
-            name: {'mmd2_runs': runs, 'mmd2_mean': float(np.mean(runs)),
-                   'mmd2_std': float(np.std(runs, ddof=1)) if repeats > 1 else 0.0}
+            name: {
+                "mmd2_runs": runs,
+                "mmd2_mean": float(np.mean(runs)),
+                "mmd2_std": float(np.std(runs, ddof=1)) if repeats > 1 else 0.0,
+            }
             for name, runs in sensitivities.items()
         },
         "sensitivity_protocol": "same fixed subsample indices; feature/transform variants reestimate pooled bandwidth; bandwidth variants use baseline sigma x0.5/x2",
@@ -625,19 +653,23 @@ def intrinsic_mmd(source, target, sample_size=2048, repeats=5, seed=42,
 def domain_auc_cv(source, target, seed=42, folds=5):
     """Shared full grouped-CV protocol for every domain-classifier diagnostic."""
     if folds < 2:
-        raise ValueError('Grouped domain AUC requires at least two folds')
+        raise ValueError("Grouped domain AUC requires at least two folds")
     x = np.concatenate([source, target]).astype(np.float64)
-    y = np.concatenate([np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)])
+    y = np.concatenate(
+        [np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
+    )
     # Treat identical vectors (including missing-value locations) as one group.
     canonical = np.where(np.isfinite(x), x, np.nan)
     canonical[canonical == 0] = 0  # +/-0 are the same vector.
     x = canonical
-    keys = np.ascontiguousarray(canonical).view(
-        np.dtype((np.void, canonical.dtype.itemsize * canonical.shape[1]))
-    ).ravel()
+    keys = (
+        np.ascontiguousarray(canonical)
+        .view(np.dtype((np.void, canonical.dtype.itemsize * canonical.shape[1])))
+        .ravel()
+    )
     _, groups = np.unique(keys, return_inverse=True)
     if len(np.unique(groups)) < folds or min(len(source), len(target)) < folds:
-        raise ValueError('Not enough samples/groups for the requested domain AUC folds')
+        raise ValueError("Not enough samples/groups for the requested domain AUC folds")
     cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=seed)
     scores, details, indices = [], [], {}
     for fold, (train, test) in enumerate(cv.split(x, y, groups)):
@@ -647,36 +679,59 @@ def domain_auc_cv(source, target, seed=42, folds=5):
             raise ValueError("Not enough distinct groups for two-domain grouped CV")
         model = make_pipeline(
             SimpleImputer(strategy="median", keep_empty_features=True),
-            RobustScaler(), LogisticRegression(max_iter=1000, random_state=seed),
+            RobustScaler(),
+            LogisticRegression(max_iter=5000, random_state=seed),
         )
         model.fit(x[train], y[train])
         scores.append(float(roc_auc_score(y[test], model.predict_proba(x[test])[:, 1])))
-        indices[f'fold{fold}_train'], indices[f'fold{fold}_test'] = train, test
-        details.append({'fold': fold, 'train_domain_counts': np.bincount(y[train], minlength=2).tolist(),
-                        'test_domain_counts': np.bincount(y[test], minlength=2).tolist()})
+        indices[f"fold{fold}_train"], indices[f"fold{fold}_test"] = train, test
+        details.append(
+            {
+                "fold": fold,
+                "train_domain_counts": np.bincount(y[train], minlength=2).tolist(),
+                "test_domain_counts": np.bincount(y[test], minlength=2).tolist(),
+            }
+        )
     return {
-        'classifier': 'logistic_regression', 'cv_folds': folds,
-        'source_sample_rows': len(source), 'target_sample_rows': len(target),
-        'auc_mean': float(np.mean(scores)), 'auc_std': float(np.std(scores, ddof=1)),
-        'auc_folds': scores, 'fold_details': details,
+        "classifier": "logistic_regression",
+        "cv_folds": folds,
+        "source_sample_rows": len(source),
+        "target_sample_rows": len(target),
+        "auc_mean": float(np.mean(scores)),
+        "auc_std": float(np.std(scores, ddof=1)),
+        "auc_folds": scores,
+        "fold_details": details,
         "split": "full stratified grouped cross-validation",
         "grouping": "identical feature vectors; no overlap between train/test",
         "duplicate_groups_overlap": 0,
         "preprocessing_fit": "classifier training partition only",
-        'std_interpretation': 'fold variability; not a 95% confidence interval',
+        "std_interpretation": "fold variability; not a 95% confidence interval",
     }, indices
 
 
-def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
-                  mmd_sample=2048, mmd_repeats=5, overwrite=False):
+def run_intrinsic(
+    raw_root,
+    seed=42,
+    analysis_sample=100_000,
+    mmd_sample=2048,
+    mmd_repeats=5,
+    overwrite=False,
+):
     """Diagnostic only: canonical raw training samples, shared pooled transform."""
+
     def signed_log1p(x):
         x = np.asarray(x, dtype=np.float64)
         return np.sign(x) * np.log1p(np.abs(x))
+
     revision = verify_revision()
     raw_root = Path(raw_root)
-    if revision and raw_root.resolve() != revision_path('common_root', raw_root).resolve():
-        raise ValueError('Intrinsic raw-root must match the selected frozen canonical common root')
+    if (
+        revision
+        and raw_root.resolve() != revision_path("common_root", raw_root).resolve()
+    ):
+        raise ValueError(
+            "Intrinsic raw-root must match the selected frozen canonical common root"
+        )
     output_dir = RESULT_ROOT / "intrinsic" / f"seed{seed}"
     if output_dir.exists() and not overwrite:
         raise FileExistsError(f"Result exists: {output_dir}. Use --overwrite to rerun.")
@@ -685,8 +740,11 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
         path = raw_root / f"{domain}_train"
         print(f"Sampling raw unlabeled training features: {path}", flush=True)
         raw[domain], totals[domain], selected = sample_features(
-            path, analysis_sample, seed + offset,
-            allow_nonfinite=True, return_indices=True,
+            path,
+            analysis_sample,
+            seed + offset,
+            allow_nonfinite=True,
+            return_indices=True,
         )
         raw[domain] = np.where(np.isfinite(raw[domain]), raw[domain], np.nan)
         artifacts[f"{domain}_raw"] = raw[domain]
@@ -701,9 +759,15 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
     transformed = scaler.transform(logged)
     u, c = np.split(transformed, [len(raw["unsw"])])
     print("Computing fixed-pair MMD and symmetry controls...", flush=True)
-    log_u, log_c = np.split(logged, [len(raw['unsw'])])
-    mmd, pairs = intrinsic_mmd(u, c, mmd_sample, mmd_repeats, seed,
-                               {'signed_log_without_scaler': (log_u, log_c)})
+    log_u, log_c = np.split(logged, [len(raw["unsw"])])
+    mmd, pairs = intrinsic_mmd(
+        u,
+        c,
+        mmd_sample,
+        mmd_repeats,
+        seed,
+        {"signed_log_without_scaler": (log_u, log_c)},
+    )
     artifacts.update(pairs)
     artifacts.update(unsw_transformed=u, cicids_transformed=c)
     # AUC sees common signed-log features; imputation/scaling fit inside holdout.
@@ -712,30 +776,43 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
     artifacts.update({f"domain_auc_{k}": v for k, v in auc_indices.items()})
     controls = {}
     for offset, domain in enumerate(("unsw", "cicids")):
-        permutation = np.random.default_rng(seed + 100 + offset).permutation(len(raw[domain]))
+        permutation = np.random.default_rng(seed + 100 + offset).permutation(
+            len(raw[domain])
+        )
         half = len(permutation) // 2
         first, second = permutation[:half], permutation[half:]
         controls[domain], split_indices = domain_auc_cv(
-            logged_raw[domain][first], logged_raw[domain][second], seed + offset,
+            logged_raw[domain][first],
+            logged_raw[domain][second],
+            seed + offset,
         )
         artifacts[f"{domain}_auc_random_partition"] = permutation
-        artifacts.update({f"{domain}_control_auc_{k}": v for k, v in split_indices.items()})
+        artifacts.update(
+            {f"{domain}_control_auc_{k}": v for k, v in split_indices.items()}
+        )
     result = {
-        "protocol": "proposal_v2", "analysis": "intrinsic_domain_shift_diagnostic",
+        "protocol": "proposal_v2",
+        "analysis": "intrinsic_domain_shift_diagnostic",
         **revision,
-        "seed": seed, "features": list(COMMON_FEATURES),
-        "raw_root": str(raw_root.resolve()), "training_rows": totals,
+        "seed": seed,
+        "features": list(COMMON_FEATURES),
+        "raw_root": str(raw_root.resolve()),
+        "training_rows": totals,
         "sample_rows": {d: len(x) for d, x in raw.items()},
         "sampling": "fixed UNSW seed, CICIDS seed+1; without replacement; reused for both directions",
-        "intrusion_labels_used": False, "provenance": provenance,
+        "intrusion_labels_used": False,
+        "provenance": provenance,
         "shared_transformation": {
             "fit_role": "pooled unlabeled sampled training data; diagnostic only",
             "steps": "median imputation -> signed_log1p -> RobustScaler",
             "medians": imputer.statistics_.tolist(),
-            "centers": scaler.center_.tolist(), "scales": scaler.scale_.tolist(),
+            "centers": scaler.center_.tolist(),
+            "scales": scaler.scale_.tolist(),
         },
-        "input_mmd": mmd, "ks_by_feature": compute_ks(u, c),
-        "domain_classifier": auc, "same_domain_auc_controls": controls,
+        "input_mmd": mmd,
+        "ks_by_feature": compute_ks(u, c),
+        "domain_classifier": auc,
+        "same_domain_auc_controls": controls,
         "control_interpretation": "independent same-domain biased MMD need not equal zero; random-partition AUC should be near 0.5, without a hard pass threshold",
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -747,8 +824,12 @@ def run_intrinsic(raw_root, seed=42, analysis_sample=100_000,
     with output.open("w", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
-    print(f"MMD² = {mmd['mmd2_mean']:.6f} ± {mmd['mmd2_std']:.6f} (subsampling std, not 95% CI)")
-    print(f"Symmetry passed (epsilon={mmd['symmetry_epsilon']:.3g}); grouped-CV AUC={auc['auc_mean']:.6f} ± {auc['auc_std']:.6f}")
+    print(
+        f"MMD² = {mmd['mmd2_mean']:.6f} ± {mmd['mmd2_std']:.6f} (subsampling std, not 95% CI)"
+    )
+    print(
+        f"Symmetry passed (epsilon={mmd['symmetry_epsilon']:.3g}); grouped-CV AUC={auc['auc_mean']:.6f} ± {auc['auc_std']:.6f}"
+    )
     print(f"Saved: {output}")
     return result
 
@@ -767,10 +848,22 @@ def main():
             "both",
         ],
     )
-    parser.add_argument("--mode", choices=["directional", "intrinsic"], default="directional")
-    parser.add_argument("--raw-root", type=Path, default=revision_path('common_root', ROOT / 'data/bigdata/thesis_20261005/common'),
-                        help="Canonical unscaled common-feature training Parquets for intrinsic mode.")
-    parser.add_argument("--overwrite", action="store_true", help="Replace intrinsic diagnostic artifacts.")
+    parser.add_argument(
+        "--mode", choices=["directional", "intrinsic"], default="directional"
+    )
+    parser.add_argument(
+        "--raw-root",
+        type=Path,
+        default=revision_path(
+            "common_root", ROOT / "data/bigdata/thesis_20261005/common"
+        ),
+        help="Canonical unscaled common-feature training Parquets for intrinsic mode.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace intrinsic diagnostic artifacts.",
+    )
 
     parser.add_argument(
         "--seed",
@@ -818,8 +911,14 @@ def main():
         parser.error("cv-folds must be >= 2")
 
     if args.mode == "intrinsic":
-        run_intrinsic(args.raw_root, args.seed, args.analysis_sample,
-                      args.mmd_sample, args.mmd_repeats, args.overwrite)
+        run_intrinsic(
+            args.raw_root,
+            args.seed,
+            args.analysis_sample,
+            args.mmd_sample,
+            args.mmd_repeats,
+            args.overwrite,
+        )
         return
 
     if args.direction == "both":

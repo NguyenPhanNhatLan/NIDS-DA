@@ -32,6 +32,10 @@ export PYSPARK_PYTHON="$PWD/.venv/bin/python"
 export PYSPARK_DRIVER_PYTHON="$PYSPARK_PYTHON"
 ```
 
+Khi chạy bằng `python`, `src/spark_session.py` tự chọn Spark đi kèm PySpark
+trong môi trường đang dùng, tránh trộn với Spark Homebrew qua `SPARK_HOME`.
+Khi chạy qua `spark-submit`, cấu hình gateway hiện có được giữ nguyên.
+
 ## Chạy theo thứ tự
 
 ```bash
