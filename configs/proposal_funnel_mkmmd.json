@@ -1,0 +1,26 @@
+{
+  "protocol": "proposal_v2",
+  "common_feature_config": "configs/common_features_v2.json",
+  "feature_count": 5,
+  "development_split": "target_val",
+  "method": "mk_mmd",
+  "architecture": "NIDSFunnelMLP",
+  "latent_dim": 5,
+  "lambda_mmd": 0.01,
+  "alpha_ce": 1.0,
+  "mmd": {
+    "layer": "normalized_bottleneck_5d",
+    "kernel": "multi_rbf",
+    "bandwidth": "shared_median_heuristic_per_batch",
+    "scales": [0.5, 1.0, 2.0],
+    "estimator": "biased"
+  },
+  "training": {
+    "batch_size": 256,
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "patience": 7,
+    "min_delta": 0.0001
+  }
+}
