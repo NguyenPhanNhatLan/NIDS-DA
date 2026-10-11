@@ -1,0 +1,27 @@
+{
+  "extension_id": "supcon_mkmmd_ext_v1",
+  "architecture": "BaselineMLP",
+  "feature_count": 5,
+  "latent_dim": 168,
+  "experiments": ["E1", "E2"],
+  "initialization": "corresponding_source_only_checkpoint_independent",
+  "alpha_ce": 1.0,
+  "alpha_supcon": 0.1,
+  "temperature": 0.1,
+  "lambda_mkmmd_e2": 0.01,
+  "kernel_scales": [0.5, 1.0, 2.0],
+  "supcon_representation": "l2_normalized_source_latent",
+  "alignment_representation": "raw_168d_latent",
+  "training": {
+    "batch_size": 256,
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "patience": 7,
+    "min_delta": 0.0001
+  },
+  "checkpoint_selection": "source_val_ap_including_epoch0",
+  "threshold_selection": "source_val_f1",
+  "bn_running_stats_frozen": true,
+  "target_labels_used_training": false
+}

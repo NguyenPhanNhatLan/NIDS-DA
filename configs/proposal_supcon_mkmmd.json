@@ -1,0 +1,19 @@
+{
+  "extension_id": "supcon_mkmmd_ext_v2",
+  "experiment": "E2",
+  "architecture": "BaselineMLP",
+  "feature_count": 5,
+  "latent_dim": 168,
+  "projection_dim": 64,
+  "alpha_supcon": 0.1,
+  "temperature": 0.1,
+  "lambda_mmd": 0.01,
+  "kernel_scales": [0.5, 1.0, 2.0],
+  "mmd_warmup_epochs": 10,
+  "training": {
+    "batch_size": 256, "epochs": 50, "learning_rate": 0.001,
+    "weight_decay": 0.0001, "patience": 7, "min_delta": 0.0001
+  },
+  "diagnostics": {"sample_rows": 4096, "mmd_sample": 256, "mmd_repeats": 5,
+                  "cv_folds": 5, "gradient_batches": 5}
+}
