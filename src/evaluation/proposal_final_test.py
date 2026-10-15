@@ -10,6 +10,7 @@ from sklearn.metrics import average_precision_score
 
 from evaluation.baseline import collect_scores, compute_metrics, select_f1_threshold
 from features.common_features import COMMON_FEATURES
+from experiments.proposal_protocol import METHOD_CONFIGS as CONFIGS
 from models.baseline import BaselineMLP
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import output_paths, sha256
@@ -20,11 +21,6 @@ ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_ROOT = (
     revision_path("result_root", ROOT / "results/proposal_v2") / "final_target_test"
 )
-CONFIGS = {
-    "marginal_mmd": ROOT / "configs/proposal_mmd_v2.json",
-    "mk_mmd": ROOT / "configs/proposal_mkmmd_v2.json",
-    "class_aware_mmd": ROOT / "configs/proposal_class_aware_v2.json",
-}
 
 
 def paths(method, direction, seed):

@@ -104,3 +104,44 @@ Chạy riêng tests analytics (fixtures nhỏ, không khởi động Spark):
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -p 'test_proposal_analytics.py' -v
 ```
+
+## Vẽ trực tiếp từ CSV bằng notebook
+
+Mở `notebooks/research_csv_visualizations.ipynb`, chọn Python kernel của `.venv`
+và chạy **Run All**. Notebook sử dụng pandas/matplotlib có sẵn trong dependencies,
+đọc các export tại `results/canonical/tableau` và `results/analysis/tableau_*`,
+cùng bảng RQ1 và latent kNN. Không cần Tableau, DuckDB hay chạy lại model.
+
+Đổi `SEED` ở cell cấu hình để chọn training/sampling seed cho đường cong;
+UMAP chỉ hiển thị seed có trong CSV. Các bảng summary vẫn giữ tất cả seeds.
+CSV đường cong lớn được đọc theo chunks và lọc seed trong lúc đọc.
+Hình có tiêu đề, đơn vị/trục, legend và chú thích nguồn; xuất PNG 300 dpi và PDF
+vào `results/analysis/notebook_figures`. Đặt `EXPORT=False` để chỉ xem inline.
+Run All ghi đè hình cùng tên trong thư mục này.
+
+Các nhóm hình: hiệu năng/paired gain/confusion matrices, within/cross-domain AP,
+RQ1, PR before/after, KS/ECDF, class-conditional/joint feature distributions,
+UMAP, alignment/negative transfer, score/threshold, gradient conflict/BatchNorm,
+và latent kNN. Kết quả canonical hiện là target validation; không gắn nhãn
+final test. Oracle thresholds và class diagnostics chỉ là phân tích post-hoc.
+
+Định dạng hình đồ án: rộng 16 cm (vùng nội dung A4), cao tối đa khoảng 23.4 cm,
+nhãn danh mục trục X xoay 90°, cỡ chữ trục 9 pt / tick 8 pt. Khi chèn vào Word,
+đặt chiều rộng 16 cm và giữ tỉ lệ. PNG 300 dpi; PDF nhúng font để giữ chữ sắc nét.
+Các panel được sắp xếp tối đa hai cột, tiêu đề dài tự ngắt dòng.
+
+Notebook còn có mục **10 · Figure tổng**: sáu nhóm figure ghép trực tiếp từ dữ liệu
+(hiệu năng, RQ1, KS+ECDF, alignment/negative transfer, prediction quality, kNN).
+Figure tổng rộng 26 cm, cao tối đa 24 cm, có nhãn subfigure (a), (b)…;
+phù hợp trang A4 ngang. Hình sẵn có từ bốn panel trở lên cũng dùng kích thước lớn.
+Không thu nhỏ figure tổng xuống 16 cm; dùng các hình đơn nếu cần trang A4 dọc.
+
+Figure 4.1 ở Cell 11 có bản A4 dọc riêng: năm panel ECDF và một legend chung,
+không có tiêu đề dashboard/footer. Dùng `figure_4_1_class_ecdf.pdf` hoặc `.png`
+và caption `.caption.txt` cùng tên. Metadata và phạm vi kiểm tra nguồn được ghi
+trong `docs/notebook_figure_metadata_audit.md`. Màu theo ý nghĩa được cố định;
+seed filters được truyền rõ vào `load(filters=...)`, SD không dùng tên cột CI.
+
+Nhãn danh mục hiện tự chọn 0° khi đủ khoảng cách giữa các nhãn, và 90° khi
+có nguy cơ chồng chữ. Grouped bars AP và MMD² dùng nhãn ngang; tên model dài
+ở hình AP được ngắt dòng để giữ kích thước 16 cm.

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -30,6 +29,7 @@ from training.proposal_mkmmd import multi_kernel_mmd_loss
 
 from training.data_revision import (
     revision_path,
+    file_sha256 as sha256,
     verify_revision,
     require_development_open,
 )
@@ -65,28 +65,13 @@ def output_paths(direction, seed, config_path):
     )
 
 
-def sha256(path):
-    h = hashlib.sha256()
-
-    with Path(path).open("rb") as stream:
-        while True:
-            chunk = stream.read(1024 * 1024)
-
-            if not chunk:
-                break
-
-            h.update(chunk)
-
-    return h.hexdigest()
-
-
 def load_config(path):
     path = Path(path)
 
     config = json.loads(path.read_text())
 
     if config["feature_count"] != len(COMMON_FEATURES):
-        raise ValueError("Config feature_count does " "not match COMMON_FEATURES")
+        raise ValueError("Config feature_count does not match COMMON_FEATURES")
 
     if config["lambda_mmd"] < 0:
         raise ValueError("lambda_mmd must be >= 0")
@@ -124,7 +109,6 @@ def load_config(path):
 
 
 def direction_domains(direction):
-
     if direction == "unsw_to_cicids":
         return "unsw", "cicids"
 
@@ -135,7 +119,6 @@ def direction_domains(direction):
 
 
 def get_device():
-
     if torch.cuda.is_available():
         return torch.device("cuda")
 
@@ -155,7 +138,6 @@ def count_classes(
     path,
     input_dim,
 ):
-
     loader = ParquetBatchStream(path, 4096, False, 0, True)
 
     counts = torch.zeros(
@@ -164,7 +146,6 @@ def count_classes(
     )
 
     for _, labels in loader:
-
         counts += torch.bincount(
             labels,
             minlength=2,
@@ -185,7 +166,6 @@ def train_mmd(
     config,
     expected_source_ap=None,
 ):
-
     device = next(model.parameters()).device
 
     settings = config["training"]
@@ -240,7 +220,6 @@ def train_mmd(
         1,
         settings["epochs"] + 1,
     ):
-
         model.train()
         freeze_bn_stats(model)
 
@@ -259,18 +238,11 @@ def train_mmd(
 
         steps = 0
 
-        # IMPORTANT:
-        # source loader defines epoch length.
-        # Therefore one epoch corresponds
-        # approximately to one source pass,
-        # matching source-only training.
+        # One epoch follows the source loader; target batches cycle as needed.
         for source_x, source_y in source_loader:
-
             try:
                 target_x = next(target_iterator)
-
             except StopIteration:
-
                 target_iterator = iter(target_loader)
 
                 target_x = next(target_iterator)
@@ -338,18 +310,10 @@ def train_mmd(
                     lambda_mmd > 0 and len(stats["active_classes"]) == 2
                 )
 
-            # ------------------------------------------------
-            # Source supervised loss
-            # ------------------------------------------------
-
             ce_loss = criterion(
                 source_logits,
                 source_y,
             )
-
-            # ------------------------------------------------
-            # Target-unlabeled marginal MMD
-            # ------------------------------------------------
 
             if lambda_mmd == 0:
                 alignment_loss = source_z.new_zeros(())
@@ -392,10 +356,6 @@ def train_mmd(
 
         if steps == 0:
             raise RuntimeError("No MMD training batches")
-
-        # ----------------------------------------------------
-        # Source validation ONLY
-        # ----------------------------------------------------
 
         val_ap = evaluate_ap(
             model,
@@ -457,22 +417,17 @@ def train_mmd(
         improvement = val_ap - best_ap
 
         if val_ap > best_ap:
-
             best_ap = val_ap
             best_epoch = epoch
 
             best_state = deepcopy(model.state_dict())
 
         if improvement > settings["min_delta"]:
-
             epochs_without_improvement = 0
-
         else:
-
             epochs_without_improvement += 1
 
         if epochs_without_improvement >= settings["patience"]:
-
             print("Early stopping.")
 
             break
@@ -498,7 +453,6 @@ def evaluate_split(
     input_dim,
     threshold,
 ):
-
     loader = ParquetBatchStream(path, 1024, False, 0, True)
 
     labels, scores = collect_scores(
@@ -518,7 +472,6 @@ def run(
     seed=42,
     config_path=DEFAULT_CONFIG,
 ):
-
     config_path = Path(config_path)
 
     require_development_open()
@@ -607,27 +560,19 @@ def run(
 
     print(f"\n=== {config['method']}: {direction} ===")
 
-    print(f"Source={source} | " f"Target={target}")
+    print(f"Source={source} | Target={target}")
 
-    print(f"Seed={seed} | " f"Device={device}")
+    print(f"Seed={seed} | Device={device}")
 
     print(f"Features={input_dim}")
 
-    print(f"lambda_mmd=" f"{config['lambda_mmd']}")
+    print(f"lambda_mmd={config['lambda_mmd']}")
     print(f"alpha_ce={config['alpha_ce']}")
-
-    # --------------------------------------------------------
-    # Source class counts
-    # --------------------------------------------------------
 
     counts = count_classes(
         source_train_path,
         input_dim,
     )
-
-    # --------------------------------------------------------
-    # Training loaders
-    # --------------------------------------------------------
 
     source_loader = ParquetBatchStream(
         source_train_path,
@@ -638,7 +583,6 @@ def run(
         drop_last=True,
     )
 
-    # This loader reads FEATURES ONLY.
     target_loader = ParquetBatchStream(
         target_train_path,
         config["training"]["batch_size"],
@@ -649,10 +593,6 @@ def run(
     )
 
     source_val_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
-
-    # --------------------------------------------------------
-    # Same architecture as source-only
-    # --------------------------------------------------------
 
     model = BaselineMLP(input_dim=input_dim).to(device)
     model.load_state_dict(source_checkpoint["model_state_dict"])
@@ -719,10 +659,6 @@ def run(
         for metric in metric_names
     }
 
-    # --------------------------------------------------------
-    # Checkpoint
-    # --------------------------------------------------------
-
     model_dir = checkpoint_path.parent
 
     model_dir.mkdir(
@@ -766,10 +702,6 @@ def run(
         },
         checkpoint_path,
     )
-
-    # --------------------------------------------------------
-    # Result
-    # --------------------------------------------------------
 
     result = {
         **revision,
@@ -831,7 +763,6 @@ def run(
         "x",
         encoding="utf-8",
     ) as stream:
-
         json.dump(
             result,
             stream,
@@ -844,7 +775,6 @@ def run(
     print("\nMetric | Source-only " "| MMD | Delta")
 
     for metric in metric_names:
-
         print(
             f"{metric:10s} | "
             f"{baseline_cross[metric]:.6f} | "
@@ -860,7 +790,6 @@ def run(
 
 
 def main():
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument(

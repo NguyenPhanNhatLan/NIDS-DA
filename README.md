@@ -1,29 +1,19 @@
-# Cross-domain NIDS — canonical proposal_v2 pipeline
+# Cross-domain NIDS
 
-Một entry point chính thức: `python -m experiments.proposal_pipeline`.
-Một manifest: `data/revisions/canonical/manifest.json`.
+Thực nghiệm phát hiện xâm nhập giữa UNSW-NB15 và CICIDS với 5 đặc trưng chung:
+`flow_duration`, `fwd_packets`, `bwd_packets`, `fwd_bytes`, `bwd_bytes`.
 
-```text
-Nguồn Spark có manifest → raw identity + split + mapping/quality audit
-→ thống nhất precision-collision groups → source-train preprocessing → freeze
-→ intrinsic/directional diagnostics → 4 methods × 2 directions × 5 seeds
-→ development aggregate → lock-development → final-test riêng
-```
-
-Nguồn đầu vào hiện tại: `data/bigdata/thesis_20261005/`, gồm `manifest.json`,
-`ingested/`, `splits/`, `common/`. Đây là upstream, không phải phiên bản training
-thứ hai. Pipeline không phụ thuộc prepared roots cũ hoặc `data/features/common_raw`.
-
-Năm inputs theo `configs/common_features_v2.json`: `flow_duration`, `fwd_packets`,
-`bwd_packets`, `fwd_bytes`, `bwd_bytes`. CICIDS duration µs → seconds.
-Giữ mọi flow/label, báo ambiguity; nhóm raw hoặc prepared float32 giống nhau
-phải nằm trong một split. Hai chiều dùng cùng common splits và source-only fitted
-median → signed log1p → RobustScaler. Manifest khóa hashes trước training.
+Pipeline chính dùng revision `canonical`, gồm **40 runs = 2 chiều × 4 methods × 5 seeds (42–46)**.
+Methods: `source_only`, `marginal_mmd`, `mk_mmd`, `class_aware_mmd`.
+Ma trận được khai báo trong `configs/proposal_suite_v2.json`; đường dẫn config từng
+method và các hằng số dùng chung nằm trong `src/experiments/proposal_protocol.py`.
 
 ## Cài đặt
 
+Dùng Python ≥ 3.11. Bước chuẩn bị dữ liệu cần Java 17 và PySpark.
+
 ```bash
-cd /Users/thonph/Desktop/KLTN
+python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[analytics,bigdata]'
 export PYTHONPATH="$PWD/src"
@@ -32,97 +22,90 @@ export PYSPARK_PYTHON="$PWD/.venv/bin/python"
 export PYSPARK_DRIVER_PYTHON="$PYSPARK_PYTHON"
 ```
 
-Khi chạy bằng `python`, `src/spark_session.py` tự chọn Spark đi kèm PySpark
-trong môi trường đang dùng, tránh trộn với Spark Homebrew qua `SPARK_HOME`.
-Khi chạy qua `spark-submit`, cấu hình gateway hiện có được giữ nguyên.
+Chạy các lệnh từ thư mục gốc repository. `src/spark_session.py` chọn Spark đi kèm
+PySpark; khi dùng `spark-submit`, module giữ cấu hình gateway hiện có.
 
-## Chạy theo thứ tự
+## Chạy pipeline
+
+Entry point: `python -m experiments.proposal_pipeline --stage <stage>`.
+
+```text
+prepare → verify → diagnostics → train → evaluation → aggregate
+                                                    ↓
+                                    lock-development → final-test
+```
+
+| Stage | Công việc |
+| --- | --- |
+| `prepare` | Audit dữ liệu upstream, xử lý nhóm trùng xuyên split, fit preprocessing và freeze manifest. |
+| `verify` | Xác minh checksum manifest, hashes frozen files và inventory Parquet. |
+| `diagnostics` | Đo domain shift intrinsic và theo chiều, với controls/sensitivity. |
+| `train` | Huấn luyện source-only và 3 adaptation methods cho toàn bộ ma trận. |
+| `resume-train` | Tiếp tục train bị gián đoạn; replay-validation trước khi dùng lại run đã có. Cặp checkpoint/result thiếu một file sẽ dừng để kiểm tra. |
+| `evaluation` | Tính post-hoc diagnostics trên target validation cho 30 adaptation runs. |
+| `aggregate` | Tổng hợp 40 development runs, thống kê theo seeds và paired ΔAP. |
+| `lock-development` | Kiểm tra đủ ma trận, aggregate, provenance; replay source-validation AP/threshold và khóa artifacts. |
+| `final-test` | Đánh giá target test sau khi xác minh development lock. |
+
+Ví dụ kiểm tra dữ liệu và tổng hợp các runs đã hoàn thành:
 
 ```bash
-python -m experiments.proposal_pipeline --stage prepare
 python -m experiments.proposal_pipeline --stage verify
-python -m experiments.proposal_pipeline --stage diagnostics
-python -m experiments.proposal_pipeline --stage train
-python -m experiments.proposal_pipeline --stage evaluation
 python -m experiments.proposal_pipeline --stage aggregate
 ```
 
-`prepare` gồm raw duplicate/label audit, replay splits, mapping/quality audit và
-freeze. Split replay dùng Spark `xxhash64` trực tiếp, không có implementation NumPy
-dự phòng; cần Java 17/PySpark trong `.venv`. Raw audit tính bucket một lần, ghi 64
-Parquet partitions tạm rồi audit từng partition; không quét input 64 lần. So sánh
-vẫn chính xác trên toàn bộ cột, hash chỉ dùng để phân vùng. Mỗi bước dừng khi audit lỗi.
-Không tự ghi đè output của lần chạy trước hoặc build dở.
+`prepare` từ chối output đã tồn tại. Khi train bị gián đoạn, dùng `resume-train`.
+Sau `lock-development`, pipeline chặn retraining; chỉ chạy `final-test` khi đã chốt
+features, configs, checkpoints và thresholds.
 
-`relocation_audit.json` và `.csv` ghi counts/class counts ban đầu/cuối, các hướng
-chuyển split, prevalence trước/sau và overlap cuối. Policy chốt trước prepare ở
-`configs/proposal_data_policy.json`: tối đa 1% flow bị chuyển trên mỗi dataset và
-thay đổi attack prevalence tối đa 0.005 (0.5 điểm phần trăm) ở mỗi split. Đây là
-ngưỡng yêu cầu xem xét thiết kế, không phải ngưỡng thống kê; vượt ngưỡng sẽ dừng
-freeze để xem lại split strategy. Không tự tăng ngưỡng sau khi thấy final-test.
-Reports cũng ghi elapsed time và peak RSS của process; freeze còn nạp common data
-vào NumPy, không được coi là streaming hoặc có tổng RAM cố định 1 GB.
+## Dữ liệu và lựa chọn mô hình
 
-`diagnostics` gồm intrinsic controls/sensitivity và hai chiều source-fitted.
-Intrinsic dùng cùng flow, subsamples và bandwidth khi hoán đổi domain. AUC của cả
-hai chế độ và controls dùng đủ 5 StratifiedGroupKFold folds, gom duplicate vectors
-cùng fold và fit imputer/scaler/classifier bên trong train fold. Báo mean ± sample
-std giữa folds, không gọi đó là CI 95%. MMD ± std là độ
-biến thiên subsampling, **không phải CI 95%**. Byte mapping còn có điều kiện về
-extractor semantics, nên luôn báo sensitivity bỏ hai byte features.
+Upstream hiện tại là `data/bigdata/thesis_20261005/`. Manifest chính thức duy nhất:
+`data/revisions/canonical/manifest.json`, kèm `manifest.sha256`.
 
-`train` chạy source-only rồi marginal MMD, MK-MMD, class-aware MMD, theo cả hai
-chiều và seeds 42–46. Cả ba adaptation methods dùng một trainer. Checkpoint chọn
-bằng source-val AP; threshold bằng source-val F1. Không dùng target test để tuning.
-Class-aware có policy `missing_class_policy=skip_batch`: chỉ alignment khi cả hai
-lớp có ít nhất 2 source và 2 accepted target samples; thiếu lớp thì bỏ toàn bộ
-class-aware term. Không ép pseudo-label Attack. History ghi active classes,
-eligible/aligned/skipped batches và acceptance theo predicted class (không theo
-target ground truth).
+Hai chiều dùng chung common splits và membership. Mỗi chiều fit median imputation
+→ signed log1p → RobustScaler trên source train. CICIDS duration đổi từ µs sang giây.
+Giữ flow, multiplicity và labels gốc; ambiguity được báo cáo. Nhóm feature giống nhau
+xuyên split được chuyển về holdout xa nhất (`test > val > train`), theo giới hạn đã
+chốt trong `configs/proposal_data_policy.json`.
 
-`evaluation` chạy negative-transfer diagnostics trên validation sau training,
-cho cả hai chiều, năm seeds và ba adaptation methods.
+Checkpoint chọn bằng source-validation AP; threshold chọn bằng source-validation F1.
+Target train chỉ cung cấp features cho adaptation; target validation phục vụ development
+diagnostics; target test dành cho stage cuối. Class-aware MMD bỏ alignment của cả batch
+nếu một trong hai lớp không đủ 2 source và 2 accepted target samples.
 
-Chỉ sau khi chốt development mới chạy:
+Aggregate báo mean, sample std và CI Student-t qua 5 seeds; ΔAP dùng paired seeds.
+Std của MMD subsamples và domain-AUC folds không phải CI 95%. Byte mapping còn phụ thuộc
+extractor semantics, nên diagnostics có sensitivity bỏ byte features.
 
-```bash
-python -m experiments.proposal_pipeline --stage lock-development
-python -m experiments.proposal_pipeline --stage final-test
-```
+## Cấu trúc
 
-`lock-development` bắt buộc đủ 40 kết quả và aggregate khớp, xác minh checkpoint,
-config/provenance và replay source-validation AP/threshold cho toàn bộ matrix.
-Nó khóa hashes aggregate, checkpoints, results và method configs. Final test bị
-chặn nếu lock thiếu hoặc artifact đổi. Sau khi lock, không retrain/overwrite protocol;
-không dùng target-test để chọn lại feature/hyperparameter. Source-validation replay
-vẫn chạy trước khi đọc target-test labels.
+| Thư mục | Nội dung |
+| --- | --- |
+| `src/bigdata/` | Ingest và xử lý dữ liệu upstream bằng Spark. |
+| `src/features/` | Feature mapping, preprocessing, audit hỗ trợ và freeze revision. |
+| `src/experiments/` | Điều phối pipeline và cấu hình protocol dùng chung. |
+| `src/training/`, `src/models/` | Model, loss và trainers. |
+| `src/evaluation/` | Audit, diagnostics, aggregate, lock, final-test và CSV exporters. |
+| `src/analytics/`, `analytics/` | Tạo và lưu bảng phục vụ BI. |
+| `notebooks/` | Phân tích, hình và các thử nghiệm bổ sung. |
+| `docs/` | Data contract, semantic review và báo cáo kiểm tra. |
 
-## Output duy nhất
+Outputs canonical:
 
 ```text
-results/data_audit/canonical/                 # reports trước freeze
-data/revisions/canonical/                    # common, prepared, manifest, audits
-models/canonical/                            # preprocessing và checkpoints
-results/canonical/                           # diagnostics, training, aggregate, final test
+results/data_audit/canonical/    # audits trước freeze
+data/revisions/canonical/       # common/prepared data và manifest
+models/canonical/               # preprocessors và checkpoints
+results/canonical/              # diagnostics, runs, aggregate và final-test
 ```
 
-Pipeline tự chọn manifest; không cần export root hoặc direction riêng.
-Hash/inventory thay đổi sẽ bị chặn trước training/evaluation.
-Các module audit/training là thành phần nội bộ của cùng pipeline.
-Notebook và `legacy/` là lịch sử/EDA, không thuộc luồng chạy chính thức.
+Các công cụ EDA, classical baselines, extension/funnel và BI không được tính vào
+ma trận 40 runs. Tên `target_val` trong đường dẫn artifacts tương ứng target validation;
+`pr_auc` trong kết quả là average precision (AP). Giữ các tên này để đọc artifacts đã lưu.
 
-Chi tiết: [canonical revision](docs/canonical_data_revision.md),
-[semantic mapping](docs/semantic_feature_review_20261009.md).
-
-Nếu cần tự chạy synthetic tests, tách khỏi dữ liệu thật:
-
-```bash
-KLTN_DATA_MANIFEST='' python -m unittest discover -s tests -v
-```
-
-Integration test riêng cho Spark hash/bucket/membership và fixture null/NaN,
-negative values, ±0, int/long/float/double:
-
-```bash
-KLTN_DATA_MANIFEST='' python -m unittest discover -s tests -p test_proposal_split_replay.py -v
-```
+Chi tiết: [data contract](docs/canonical_data_revision.md),
+[manifest](docs/experiment_manifest.md),
+[semantic review](docs/semantic_feature_review_20261009.md),
+[analytics](docs/analytics_pipeline.md),
+[kiểm tra artifacts ngày 15/10/2026](docs/canonical_pipeline_audit_20261015.md).

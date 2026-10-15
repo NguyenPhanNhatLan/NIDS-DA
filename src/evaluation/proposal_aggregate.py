@@ -9,16 +9,13 @@ from scipy.stats import t as student_t
 
 from training.proposal_mmd import output_paths, sha256
 from features.common_features import COMMON_FEATURES
-
-ROOT = Path(__file__).resolve().parents[2]
+from experiments.proposal_protocol import METHOD_CONFIGS as CONFIGS
 from training.data_revision import revision_path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 RESULT_ROOT = revision_path("result_root", ROOT / "results/proposal_v2")
-CONFIGS = {
-    "marginal_mmd": ROOT / "configs/proposal_mmd_v2.json",
-    "mk_mmd": ROOT / "configs/proposal_mkmmd_v2.json",
-    "class_aware_mmd": ROOT / "configs/proposal_class_aware_v2.json",
-}
+
 METRICS = ("pr_auc", "macro_f1", "recall", "fpr", "roc_auc")
 
 

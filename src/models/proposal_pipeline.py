@@ -1,5 +1,7 @@
 """Source-fitted preprocessing for the 5 proposal features."""
 
+from dataclasses import dataclass
+
 import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -7,7 +9,6 @@ from sklearn.preprocessing import FunctionTransformer, RobustScaler
 
 
 def signed_log1p(features):
-    # Window sentinels can be negative, so preserve their sign.
     values = np.asarray(features, dtype=np.float32)
     return np.sign(values) * np.log1p(np.abs(values))
 
@@ -20,11 +21,6 @@ def proposal_processor():
             ("scaler", RobustScaler()),
         ]
     )
-
-
-# Only O(feature_count) parameters are retained from distributed Spark fitting.
-# NumPy here transforms a caller-supplied batch; it never loads a dataset.
-from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

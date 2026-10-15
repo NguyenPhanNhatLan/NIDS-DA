@@ -1,16 +1,20 @@
+"""Run the canonical data, development and final-test stages."""
+
 import argparse
 import json
 import os
-from pathlib import Path
+from experiments.proposal_protocol import (
+    ROOT,
+    REVISION,
+    MANIFEST,
+    DIRECTIONS,
+    SEEDS,
+    METHOD_CONFIGS,
+    experiment_matrix,
+    validate_method_configs,
+)
 
-ROOT = Path(__file__).resolve().parents[2]
-REVISION = "canonical"
-MANIFEST = ROOT / "data/revisions" / REVISION / "manifest.json"
 WORK_ROOT = ROOT / "data/bigdata/thesis_20261005"
-SUITE = json.loads((ROOT / "configs/proposal_suite_v2.json").read_text())
-DIRECTIONS = tuple(SUITE["directions"])
-SEEDS = tuple(SUITE["seeds"])
-CONFIGS = ("proposal_mmd_v2", "proposal_mkmmd_v2", "proposal_class_aware_v2")
 
 
 def prepare():
@@ -39,7 +43,7 @@ def prepare():
     split_audit(replay, WORK_ROOT)
     raw_audit(raw, WORK_ROOT)
     common_audit(audit, WORK_ROOT, replay, raw)
-    policy = json.loads((ROOT / 'configs/proposal_data_policy.json').read_text())
+    policy = json.loads((ROOT / "configs/proposal_data_policy.json").read_text())
     freeze(audit, REVISION, **policy)
 
 
@@ -90,9 +94,30 @@ def diagnostics():
     from training.data_revision import revision_path
 
     verify_input_row_counts()
-    run_intrinsic(revision_path("common_root", None), seed=42)
-    for direction in DIRECTIONS:
-        run(direction, seed=42)
+    result_root = revision_path("result_root", None)
+    common_root = revision_path("common_root", None)
+
+    for seed in SEEDS:
+        intrinsic_dir = result_root / "domain_shift" / "intrinsic" / f"seed{seed}"
+        if (intrinsic_dir / "result.json").is_file() and (
+            intrinsic_dir / "samples.npz"
+        ).is_file():
+            print(f"Reuse intrinsic diagnostics: seed{seed}", flush=True)
+        else:
+            run_intrinsic(
+                common_root,
+                seed=seed,
+                overwrite=intrinsic_dir.exists(),
+            )
+
+        for direction in DIRECTIONS:
+            output = result_root / "domain_shift" / f"{direction}_seed{seed}.json"
+            if output.is_file():
+                print(
+                    f"Reuse directional diagnostics: {direction}/seed{seed}", flush=True
+                )
+            else:
+                run(direction, seed=seed)
 
 
 def train():
@@ -103,16 +128,12 @@ def train():
     for direction in DIRECTIONS:
         for seed in SEEDS:
             source_only(direction, seed)
-            for config in CONFIGS:
-                adapted(direction, seed, ROOT / "configs" / f"{config}.json")
+            for config_path in METHOD_CONFIGS.values():
+                adapted(direction, seed, config_path)
 
 
 def resume_train():
-    """Continue an interrupted suite without overwriting or trusting stale runs.
-
-    Existing checkpoint/result pairs are replay-validated before being skipped.
-    Missing pairs are generated; half-written pairs fail closed for manual review.
-    """
+    """Resume missing runs after replay-validating existing checkpoint/result pairs."""
     from evaluation.proposal_final_test import paths, validate_development
     from experiments.proposal_source_only import run as source_only
     from training.proposal_mmd import run as adapted
@@ -120,13 +141,8 @@ def resume_train():
 
     require_development_open()
     verify_input_row_counts()
-    methods = [("source_only", None)]
-    for config in CONFIGS:
-        config_path = ROOT / "configs" / f"{config}.json"
-        method = json.loads(config_path.read_text())["method"]
-        if method not in SUITE["methods"] or method == "source_only":
-            raise ValueError(f"Unexpected method in resume config: {config_path}")
-        methods.append((method, config_path))
+    validate_method_configs()
+    methods = [("source_only", None), *METHOD_CONFIGS.items()]
 
     for direction in DIRECTIONS:
         for seed in SEEDS:
@@ -166,23 +182,23 @@ def evaluation():
 
     for direction in DIRECTIONS:
         for seed in SEEDS:
-            for config in CONFIGS:
-                run(direction, seed, ROOT / "configs" / f"{config}.json")
+            for config_path in METHOD_CONFIGS.values():
+                run(direction, seed, config_path)
 
 
 def final_test():
     from evaluation.proposal_development_lock import require_development_lock
+
     require_development_lock(select_revision())
     from evaluation.proposal_final_test import run
 
-    for direction in DIRECTIONS:
-        for seed in SEEDS:
-            for method in SUITE["methods"]:
-                run(direction, method, seed)
+    for direction, seed, method in experiment_matrix():
+        run(direction, method, seed)
 
 
 def lock_development():
     from evaluation.proposal_development_lock import freeze_development
+
     freeze_development()
 
 
@@ -204,6 +220,7 @@ def main():
         ),
     )
     stage = parser.parse_args().stage
+    validate_method_configs()
     os.environ["KLTN_DATA_MANIFEST"] = str(MANIFEST)
     if stage == "prepare":
         prepare()
