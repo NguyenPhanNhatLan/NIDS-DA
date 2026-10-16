@@ -22,6 +22,7 @@ from training.baseline import set_seed
 from training.proposal_class_aware import (
     audit_pseudo_labels,
     class_aware_mmd_loss,
+    class_separation_loss,
     class_aware_batch_stats,
 )
 from training.proposal_data import ParquetBatchStream, split_sha256
@@ -105,6 +106,15 @@ def load_config(path):
     ):
         raise ValueError("Only proposal_v2 with common_features_v2.json is supported")
 
+    separation = config.get("class_separation", {})
+    if separation:
+        import math
+        weight = separation.get("weight", 0)
+        margin = separation.get("margin", 0.5)
+        if config["method"] != "class_aware_mmd":
+            raise ValueError("Class separation requires class_aware_mmd")
+        if not math.isfinite(weight) or weight < 0 or not math.isfinite(margin) or not 0 < margin <= 4:
+            raise ValueError("Separation weight must be finite/nonnegative and squared-distance margin in (0,4]")
     return config
 
 
@@ -172,6 +182,8 @@ def train_mmd(
 
     lambda_mmd = float(config["lambda_mmd"])
     alpha_ce = float(config["alpha_ce"])
+    separation_config = config.get("class_separation", {})
+    separation_weight = float(separation_config.get("weight", 0))
     method = config.get("method", "marginal_mmd")
 
     counts = torch.as_tensor(
@@ -229,6 +241,7 @@ def train_mmd(
         total_ce = 0.0
         total_mmd = 0.0
         total_bandwidth = 0.0
+        total_separation = 0.0
         accepted_total = 0
         target_total = 0
         accepted_per_class = [0, 0]
@@ -333,7 +346,15 @@ def train_mmd(
             else:
                 alignment_loss, bandwidth = mmd_loss(source_z, target_z)
 
-            loss = alpha_ce * ce_loss + lambda_mmd * alignment_loss
+            separation_loss = source_z.new_zeros(())
+            if separation_weight > 0:
+                separation_loss = class_separation_loss(
+                    source_z, source_y, target_z, target_logits,
+                    config["mmd"]["target_pseudo_label_confidence"],
+                    separation_config.get("margin", 0.5),
+                )
+            loss = (alpha_ce * ce_loss + lambda_mmd * alignment_loss
+                    + separation_weight * separation_loss)
 
             if not torch.isfinite(loss):
                 raise ValueError("Non-finite MMD " "training loss")
@@ -351,6 +372,7 @@ def train_mmd(
             total_mmd += float(alignment_loss.item())
 
             total_bandwidth += float(bandwidth.item())
+            total_separation += float(separation_loss.item())
 
             steps += 1
 
@@ -394,6 +416,13 @@ def train_mmd(
                 "aligned_batches_per_class": [aligned_batches, aligned_batches],
             }
 
+        if separation_weight > 0:
+            row["class_separation"] = {
+                "loss": total_separation / steps,
+                "weight": separation_weight,
+                "squared_distance_margin": separation_config.get("margin", 0.5),
+                "eligible_batches": both_classes_eligible_batches,
+            }
         history.append(row)
 
         print(         
@@ -408,6 +437,8 @@ def train_mmd(
             f"Val AP="
             f"{val_ap:.6f}"
         )
+        if separation_weight > 0:
+            print(f"  Class separation: {total_separation / steps:.6f}; eligible batches={both_classes_eligible_batches}/{steps}")
         if method == "class_aware_mmd":
             print(
                 f"  Pseudo-label acceptance: {accepted_total}/{target_total} "
@@ -679,6 +710,7 @@ def run(
             "features": list(COMMON_FEATURES),
             "lambda_mmd": config["lambda_mmd"],
             "alpha_ce": config["alpha_ce"],
+            **({"class_separation": config["class_separation"]} if "class_separation" in config else {}),
             "best_epoch": best_epoch,
             "selected_stage": "source_pretrained" if best_epoch == 0 else "adaptation",
             "best_source_val_ap": best_val_ap,
@@ -722,6 +754,7 @@ def run(
         "bandwidth": config["mmd"]["bandwidth"],
         "lambda_mmd": config["lambda_mmd"],
         "alpha_ce": config["alpha_ce"],
+        **({"class_separation": config["class_separation"]} if "class_separation" in config else {}),
         "source_checkpoint": str(source_checkpoint_path),
         "source_checkpoint_sha256": sha256(source_checkpoint_path),
         "preprocessor_sha256": source_checkpoint["preprocessor_sha256"],

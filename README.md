@@ -109,3 +109,7 @@ Chi tiết: [data contract](docs/canonical_data_revision.md),
 [semantic review](docs/semantic_feature_review_20261009.md),
 [analytics](docs/analytics_pipeline.md),
 [kiểm tra artifacts ngày 15/10/2026](docs/canonical_pipeline_audit_20261015.md).
+
+Thử nghiệm ngưỡng pseudo-label và trọng số class-aware MMD:
+[hướng dẫn development](docs/class_aware_development.md). Các config bổ sung giữ nguyên
+canonical artifacts và dùng tên output riêng.

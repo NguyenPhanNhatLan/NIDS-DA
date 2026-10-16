@@ -1,5 +1,3 @@
-"""Auxiliary source-only LR/XGBoost baselines on prepared proposal_v2 features."""
-
 import argparse
 import json
 from pathlib import Path
@@ -18,7 +16,9 @@ from training.proposal_data import split_sha256
 from training.data_revision import revision_path, verify_revision
 
 ROOT = Path(__file__).resolve().parents[2]
-RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'classical_target_val'
+RESULT_ROOT = (
+    revision_path("result_root", ROOT / "results/proposal_v2") / "classical_target_val"
+)
 COMMON_CONFIG = ROOT / "configs/common_features_v2.json"
 INPUT_DIM = len(COMMON_FEATURES)
 
@@ -113,11 +113,15 @@ def run(direction, method, seed=42, max_train_rows=250000):
     source, target = domains(direction)
     if method not in {"logistic_regression", "xgboost"}:
         raise ValueError(f"Unknown classical method: {method}")
-    base = revision_path('feature_root', ROOT / 'data/features/proposal_v2') / direction
+    base = revision_path("feature_root", ROOT / "data/features/proposal_v2") / direction
     source_train = base / f"{source}_train"
     source_val = base / f"{source}_val"
     target_val = base / f"{target}_val"
-    preprocessor = revision_path('model_root', ROOT / 'models/proposal_v2') / direction / 'preprocessor.joblib'
+    preprocessor = (
+        revision_path("model_root", ROOT / "models/proposal_v2")
+        / direction
+        / "preprocessor.joblib"
+    )
     if not preprocessor.is_file():
         raise FileNotFoundError(f"Missing source-fitted preprocessor: {preprocessor}")
     output = RESULT_ROOT / method / direction / f"seed{seed}.json"
