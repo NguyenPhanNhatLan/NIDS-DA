@@ -1,22 +1,14 @@
 """Export intrinsic sampling diagnostics to Tableau KS and exact ECDF CSVs."""
 import argparse
 import csv
-import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
 from scipy.stats import ks_2samp
+from project_utils import sha256
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def sha256(path):
-    digest = hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def export(result_root, output, seeds):

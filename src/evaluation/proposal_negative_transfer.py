@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
@@ -23,6 +22,8 @@ from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mmd import freeze_bn_stats, output_paths
 
 from training.data_revision import revision_path, verify_revision
+from project_utils import sha256
+from project_utils import domains
 
 ROOT = Path(__file__).resolve().parents[2]
 FEATURE_ROOT = revision_path("feature_root", ROOT / "data/features/proposal_v2")
@@ -52,22 +53,6 @@ RULES = {
     "threshold_f1_gap": 0.10,
     "threshold_min_roc_auc": 0.70,
 }
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def domains(direction):
-    if direction == "unsw_to_cicids":
-        return "unsw", "cicids"
-    if direction == "cicids_to_unsw":
-        return "cicids", "unsw"
-    raise ValueError(f"Unknown direction: {direction}")
 
 
 def load_models(direction, seed, config_path):

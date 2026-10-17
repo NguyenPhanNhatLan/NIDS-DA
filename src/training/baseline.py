@@ -165,7 +165,6 @@ def evaluate_f1(model, val_loader, device):
 
 
 class ParquetRows(IterableDataset):
-
     def __init__(self, path, input_dim, training=False):
         self.files = sorted(Path(path).glob("*.parquet"))
         if not self.files:

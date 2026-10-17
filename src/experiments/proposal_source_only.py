@@ -1,7 +1,6 @@
 """Source-only MLP baseline on the fixed 5-feature proposal_v2 data."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
@@ -13,27 +12,13 @@ from models.baseline import BaselineMLP
 from training.baseline import set_seed, train_baseline
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.data_revision import revision_path, verify_revision, require_development_open
+from project_utils import sha256
+from project_utils import domains, get_device
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_DIM = len(COMMON_FEATURES)
 CHECKPOINT_ROOT = revision_path('model_root', ROOT / 'models/proposal_v2') / 'source_only_target_val'
 RESULT_ROOT = revision_path('result_root', ROOT / 'results/proposal_v2') / 'source_only_target_val'
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def domains(direction):
-    if direction == "unsw_to_cicids":
-        return "unsw", "cicids"
-    if direction == "cicids_to_unsw":
-        return "cicids", "unsw"
-    raise ValueError(f"Unknown direction: {direction}")
 
 
 def count_classes(loader):
@@ -56,11 +41,7 @@ def run(direction, seed=42, overwrite=False):
             )
     base = revision_path('feature_root', ROOT / 'data/features/proposal_v2') / direction
     set_seed(seed)
-    device = torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps" if torch.backends.mps.is_available() else "cpu"
-    )
+    device = get_device()
 
     counts = count_classes(
         ParquetBatchStream(base / f"{source}_train", 4096, False, seed, True)

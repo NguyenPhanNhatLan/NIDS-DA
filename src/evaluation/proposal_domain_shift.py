@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
@@ -22,6 +21,8 @@ from features.parquet_vectors import vector_matrix
 from training.adaptation import mmd_loss, estimate_bandwidth_squared, rbf_kernel
 
 from training.data_revision import revision_path, verify_revision
+from project_utils import domains as direction_domains
+from project_utils import sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,36 +35,7 @@ RESULT_ROOT = (
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
 
-# =========================================================
 # Basic helpers
-# =========================================================
-
-
-def direction_domains(direction):
-    if direction == "unsw_to_cicids":
-        return "unsw", "cicids"
-
-    if direction == "cicids_to_unsw":
-        return "cicids", "unsw"
-
-    raise ValueError(f"Unknown direction: {direction}")
-
-
-def sha256(path):
-    path = Path(path)
-
-    h = hashlib.sha256()
-
-    with path.open("rb") as stream:
-        while True:
-            chunk = stream.read(1024 * 1024)
-
-            if not chunk:
-                break
-
-            h.update(chunk)
-
-    return h.hexdigest()
 
 
 def parquet_files(directory):
@@ -75,14 +47,11 @@ def parquet_files(directory):
     return files
 
 
-# =========================================================
 # Uniform feature sampling
-#
 # Important:
 # - reads ONLY "features"
 # - never reads intrusion labels
 # - avoids loading 2M rows into RAM
-# =========================================================
 
 
 def sample_features(
@@ -127,7 +96,6 @@ def sample_features(
     global_offset = 0
 
     for path in files:
-
         with pq.ParquetFile(path) as parquet:
             scalar_columns = set(COMMON_FEATURES).issubset(parquet.schema_arrow.names)
             columns = list(COMMON_FEATURES) if scalar_columns else ["features"]
@@ -153,7 +121,6 @@ def sample_features(
                 )
 
                 if right > left:
-
                     local_indices = selected[left:right] - batch_start
 
                     if scalar_columns:
@@ -213,9 +180,7 @@ def sample_features(
     return result, total_rows
 
 
-# =========================================================
 # 1. KS test
-# =========================================================
 
 
 def compute_ks(
@@ -225,7 +190,6 @@ def compute_ks(
     results = {}
 
     for index, feature in enumerate(COMMON_FEATURES):
-
         source_values = source[:, index]
 
         target_values = target[:, index]
@@ -249,16 +213,12 @@ def compute_ks(
     return results
 
 
-# =========================================================
 # 2. Input-space MMD
-#
 # Uses EXACTLY the existing project MMD:
 # - single RBF
 # - median heuristic
 # - biased empirical MMD²
-#
 # Repeat subsampling to reduce sampling noise.
-# =========================================================
 
 
 def compute_input_mmd(
@@ -283,7 +243,6 @@ def compute_input_mmd(
     bandwidth_values = []
 
     for repeat in range(repeats):
-
         source_index = rng.choice(
             len(source),
             size=n,
@@ -304,7 +263,6 @@ def compute_input_mmd(
         # deterministic diagnostic,
         # no gradient required.
         with torch.no_grad():
-
             loss, bandwidth = mmd_loss(
                 source_tensor,
                 target_tensor,
@@ -336,20 +294,14 @@ def compute_input_mmd(
     }
 
 
-# =========================================================
 # 3. Domain-classifier AUC
-#
 # domain=0 -> source
 # domain=1 -> target
-#
 # No intrusion labels.
-#
 # AUC ~ 0.5:
 #   domains hard to distinguish
-#
 # AUC -> 1:
 #   strong domain shift
-# =========================================================
 
 
 def compute_domain_auc(
@@ -361,9 +313,7 @@ def compute_domain_auc(
     return domain_auc_cv(source, target, seed=seed, folds=folds)[0]
 
 
-# =========================================================
 # Run one direction
-# =========================================================
 
 
 def run(
@@ -408,18 +358,14 @@ def run(
 
     print(f"Target rows: " f"{target_total:,} " f"(sample={len(target):,})")
 
-    # ---------------------------------
     # KS
-    # ---------------------------------
 
     ks = compute_ks(
         source,
         target,
     )
 
-    # ---------------------------------
     # MMD
-    # ---------------------------------
 
     mmd = compute_input_mmd(
         source,
@@ -429,9 +375,7 @@ def run(
         seed=seed,
     )
 
-    # ---------------------------------
     # Domain classifier
-    # ---------------------------------
 
     domain_auc = compute_domain_auc(
         source,
@@ -440,9 +384,7 @@ def run(
         folds=cv_folds,
     )
 
-    # ---------------------------------
     # Provenance
-    # ---------------------------------
 
     preprocessor_path = (
         revision_path("model_root", ROOT / "models/proposal_v2")
@@ -492,9 +434,7 @@ def run(
         "domain_classifier": domain_auc,
     }
 
-    # ---------------------------------
     # Save
-    # ---------------------------------
 
     RESULT_ROOT.mkdir(
         parents=True,
@@ -510,7 +450,6 @@ def run(
         "x",
         encoding="utf-8",
     ) as stream:
-
         json.dump(
             result,
             stream,
@@ -520,9 +459,7 @@ def run(
 
         stream.write("\n")
 
-    # ---------------------------------
     # Console summary
-    # ---------------------------------
 
     print("\nInput MMD²:")
 
@@ -541,7 +478,6 @@ def run(
     )
 
     for feature, values in sorted_ks:
-
         print(
             f"{feature:24s} "
             f"KS="
@@ -555,9 +491,7 @@ def run(
     return result
 
 
-# =========================================================
 # CLI
-# =========================================================
 
 
 def fixed_kernel_mmd(source, target, bandwidth_squared):
@@ -922,7 +856,6 @@ def main():
         return
 
     if args.direction == "both":
-
         for direction in (
             "unsw_to_cicids",
             "cicids_to_unsw",
@@ -937,7 +870,6 @@ def main():
             )
 
     else:
-
         run(
             args.direction,
             seed=args.seed,

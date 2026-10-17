@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import math
 from pathlib import Path
 from statistics import mean, stdev
+from project_utils import sha256
 
 SEEDS = (42, 43, 44, 45, 46)
 FEATURES = ("flow_duration", "fwd_packets", "bwd_packets", "fwd_bytes", "bwd_bytes")
@@ -23,14 +23,6 @@ def load_json(path: Path) -> dict:
     if not path.is_file():
         raise FileNotFoundError(f"Missing required artifact: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for part in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(part)
-    return h.hexdigest()
 
 
 def assert_close(a: float, b: float, where: str, atol: float = 1e-9) -> None:

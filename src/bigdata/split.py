@@ -1,4 +1,3 @@
-from pathlib import Path
 from features.splitting import SEED, split_data
 from bigdata.clean import validate_clean
 from bigdata.common import stage_parser, write_parquet

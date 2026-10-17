@@ -26,5 +26,8 @@ bigdata = ["pyspark>=3.5,<4"]
 classical = ["xgboost"]
 kaggle-stream = ["requests", "stream-unzip"]
 
+[tool.setuptools]
+py-modules = ["spark_session", "rq1"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

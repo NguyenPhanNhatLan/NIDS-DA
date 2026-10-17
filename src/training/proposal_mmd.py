@@ -22,6 +22,7 @@ from training.baseline import set_seed
 from training.proposal_class_aware import (
     audit_pseudo_labels,
     class_aware_mmd_loss,
+    confidence_setting,
     class_separation_loss,
     class_aware_batch_stats,
 )
@@ -34,6 +35,8 @@ from training.data_revision import (
     verify_revision,
     require_development_open,
 )
+from project_utils import domains as direction_domains
+from project_utils import get_device
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -70,6 +73,8 @@ def load_config(path):
     path = Path(path)
 
     config = json.loads(path.read_text())
+    if "selective_alignment" in config:
+        raise ValueError("EMA/anchor selective alignment has been removed; use a non-selective config such as proposal_class_aware_ablation_sep010.json")
 
     if config["feature_count"] != len(COMMON_FEATURES):
         raise ValueError("Config feature_count does not match COMMON_FEATURES")
@@ -90,15 +95,25 @@ def load_config(path):
         raise ValueError("MK-MMD requires bandwidth scales")
 
     if config["method"] == "class_aware_mmd":
-        if config["mmd"].get("missing_class_policy") != "skip_batch":
+        expected_policy = "skip_batch"
+        if config["mmd"].get("missing_class_policy") != expected_policy:
             raise ValueError(
-                "Class-aware policy must be explicitly frozen as skip_batch"
+                f"Class-aware policy must be explicitly frozen as {expected_policy}"
             )
-        confidence = config["mmd"].get("target_pseudo_label_confidence")
-        if confidence is None or not 0 <= confidence <= 1:
-            raise ValueError(
-                "Class-aware MMD requires pseudo-label confidence in [0, 1]"
-            )
+        confidence_setting(config)
+        kernel = config["mmd"].get("kernel")
+        scales = config["mmd"].get("scales")
+        if kernel not in {"single_rbf", "multi_rbf"}:
+            raise ValueError("Class-aware MMD kernel must be single_rbf or multi_rbf")
+        if kernel == "multi_rbf":
+            import math
+            if not isinstance(scales, list) or len(scales) < 2 or any(
+                not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+                for value in scales
+            ):
+                raise ValueError("Class-aware multi_rbf requires at least two positive finite scales")
+        elif scales is not None:
+            raise ValueError("Set multi_rbf to use kernel scales; legacy single_rbf uses no scales")
 
     if (
         config.get("protocol") != "proposal_v2"
@@ -115,27 +130,10 @@ def load_config(path):
             raise ValueError("Class separation requires class_aware_mmd")
         if not math.isfinite(weight) or weight < 0 or not math.isfinite(margin) or not 0 < margin <= 4:
             raise ValueError("Separation weight must be finite/nonnegative and squared-distance margin in (0,4]")
+    gradient_every = config.get("diagnostics", {}).get("gradient_every_steps", 0)
+    if type(gradient_every) is not int or gradient_every < 0:
+        raise ValueError("gradient_every_steps must be a nonnegative integer")
     return config
-
-
-def direction_domains(direction):
-    if direction == "unsw_to_cicids":
-        return "unsw", "cicids"
-
-    if direction == "cicids_to_unsw":
-        return "cicids", "unsw"
-
-    raise ValueError(f"Unknown direction: {direction}")
-
-
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-
-    return torch.device("cpu")
 
 
 def freeze_bn_stats(model):
@@ -167,6 +165,15 @@ def count_classes(
     return counts.tolist()
 
 
+def weighted_gradient_norm(term, parameters):
+    """Global parameter-gradient L2 norm of one weighted loss, without accumulating grads."""
+    if not term.requires_grad:
+        return 0.0
+    gradients = torch.autograd.grad(term, parameters, retain_graph=True, allow_unused=True)
+    norms = [gradient.detach().norm() for gradient in gradients if gradient is not None]
+    return float(torch.stack(norms).norm()) if norms else 0.0
+
+
 def train_mmd(
     model,
     counts,
@@ -185,6 +192,9 @@ def train_mmd(
     separation_config = config.get("class_separation", {})
     separation_weight = float(separation_config.get("weight", 0))
     method = config.get("method", "marginal_mmd")
+    confidence = confidence_setting(config) if method == "class_aware_mmd" else None
+    gradient_every = config.get("diagnostics", {}).get("gradient_every_steps", 0)
+    gradient_parameters = tuple(p for p in model.parameters() if p.requires_grad)
 
     counts = torch.as_tensor(
         counts,
@@ -249,6 +259,11 @@ def train_mmd(
         both_classes_eligible_batches = aligned_batches = 0
         eligibility_batches = {"none": 0, "normal_only": 0, "attack_only": 0, "both": 0}
 
+        gradient_totals = {"source_ce": 0.0, "class_mmd": 0.0, "class_separation": 0.0}
+        gradient_samples = 0
+        separation_active_batches = 0
+        per_class_aligned_batches = [0,0]
+        separation_evaluated_batches = 0
         steps = 0
 
         # One epoch follows the source loader; target batches cycle as needed.
@@ -294,11 +309,10 @@ def train_mmd(
             target_logits = combined_logits[batch_size:]
 
             if method == "class_aware_mmd":
-                stats = class_aware_batch_stats(
-                    source_y,
-                    target_logits,
-                    config["mmd"]["target_pseudo_label_confidence"],
-                )
+                stats = class_aware_batch_stats(source_y, target_logits, confidence)
+                separation_evaluated_batches += int(len(stats['eligible_classes'])==2)
+                for label in stats['active_classes']:
+                    per_class_aligned_batches[label] += int(lambda_mmd>0)
                 per_class = stats["accepted_per_class"]
                 accepted, seen = sum(per_class), sum(stats["predicted_per_class"])
                 accepted_total += accepted
@@ -320,7 +334,7 @@ def train_mmd(
                     len(stats["eligible_classes"]) == 2
                 )
                 aligned_batches += int(
-                    lambda_mmd > 0 and len(stats["active_classes"]) == 2
+                    lambda_mmd > 0 and bool(stats["active_classes"])
                 )
 
             ce_loss = criterion(
@@ -341,7 +355,8 @@ def train_mmd(
                     source_y,
                     target_z,
                     target_logits,
-                    config["mmd"]["target_pseudo_label_confidence"],
+                    confidence,
+                    scales=config["mmd"].get("scales"),
                 )
             else:
                 alignment_loss, bandwidth = mmd_loss(source_z, target_z)
@@ -350,7 +365,7 @@ def train_mmd(
             if separation_weight > 0:
                 separation_loss = class_separation_loss(
                     source_z, source_y, target_z, target_logits,
-                    config["mmd"]["target_pseudo_label_confidence"],
+                    confidence,
                     separation_config.get("margin", 0.5),
                 )
             loss = (alpha_ce * ce_loss + lambda_mmd * alignment_loss
@@ -359,6 +374,15 @@ def train_mmd(
             if not torch.isfinite(loss):
                 raise ValueError("Non-finite MMD " "training loss")
 
+            if gradient_every and steps % gradient_every == 0:
+                for name, term in (
+                    ("source_ce", alpha_ce * ce_loss),
+                    ("class_mmd", lambda_mmd * alignment_loss),
+                    ("class_separation", separation_weight * separation_loss),
+                ):
+                    gradient_totals[name] += weighted_gradient_norm(term, gradient_parameters)
+                gradient_samples += 1
+            separation_active_batches += int(float(separation_loss.detach()) > 0)
             optimizer.zero_grad()
 
             loss.backward()
@@ -393,9 +417,22 @@ def train_mmd(
             "bandwidth": total_bandwidth / steps,
             "source_val_ap": val_ap,
         }
+        row["loss_contributions"] = {
+            "weighted_source_ce": alpha_ce * total_ce / steps,
+            "weighted_class_mmd": lambda_mmd * total_mmd / steps,
+            "weighted_class_separation": separation_weight * total_separation / steps,
+        }
+        if gradient_samples:
+            row["gradient_diagnostics"] = {
+                "sampled_batches": gradient_samples,
+                "every_steps": gradient_every,
+                "mean_weighted_parameter_gradient_l2": {
+                    name: value / gradient_samples for name, value in gradient_totals.items()
+                },
+            }
         if method == "class_aware_mmd":
             row["pseudo_label_acceptance"] = {
-                "confidence_threshold": config["mmd"]["target_pseudo_label_confidence"],
+                "confidence_threshold": confidence,
                 "accepted": accepted_total,
                 "seen": target_total,
                 "rate": accepted_total / target_total,
@@ -407,13 +444,13 @@ def train_mmd(
                 ],
             }
             row["class_aware_alignment"] = {
-                "missing_class_policy": "skip_batch",
-                "active_classes": [0, 1] if aligned_batches else [],
+                "missing_class_policy": config["mmd"]["missing_class_policy"],
+                "active_classes": [c for c,n in enumerate(per_class_aligned_batches) if n],
                 "eligible_batch_counts": eligibility_batches,
                 "both_classes_eligible_batches": both_classes_eligible_batches,
                 "aligned_batches": aligned_batches,
                 "skipped_batches": steps - aligned_batches,
-                "aligned_batches_per_class": [aligned_batches, aligned_batches],
+                "aligned_batches_per_class": per_class_aligned_batches,
             }
 
         if separation_weight > 0:
@@ -421,7 +458,8 @@ def train_mmd(
                 "loss": total_separation / steps,
                 "weight": separation_weight,
                 "squared_distance_margin": separation_config.get("margin", 0.5),
-                "eligible_batches": both_classes_eligible_batches,
+                "eligible_batches": separation_evaluated_batches,
+                "positive_loss_batches": separation_active_batches,
             }
         history.append(row)
 
@@ -437,8 +475,13 @@ def train_mmd(
             f"Val AP="
             f"{val_ap:.6f}"
         )
+        if gradient_samples:
+            norms = row["gradient_diagnostics"]["mean_weighted_parameter_gradient_l2"]
+            print(f"  Weighted gradient L2 ({gradient_samples} batches): "
+                  f"CE={norms['source_ce']:.6g}; MMD={norms['class_mmd']:.6g}; "
+                  f"Sep={norms['class_separation']:.6g}")
         if separation_weight > 0:
-            print(f"  Class separation: {total_separation / steps:.6f}; eligible batches={both_classes_eligible_batches}/{steps}")
+            print(f"  Class separation: {total_separation / steps:.6f}; evaluated batches={separation_evaluated_batches}/{steps}")
         if method == "class_aware_mmd":
             print(
                 f"  Pseudo-label acceptance: {accepted_total}/{target_total} "
@@ -599,6 +642,10 @@ def run(
 
     print(f"lambda_mmd={config['lambda_mmd']}")
     print(f"alpha_ce={config['alpha_ce']}")
+    if config["method"] == "class_aware_mmd":
+        print(f"Pseudo-label confidence >= {confidence_setting(config)}")
+    if config.get("class_separation"):
+        print(f"Class separation: {config['class_separation']}")
 
     counts = count_classes(
         source_train_path,
@@ -632,7 +679,7 @@ def run(
     pseudo_label_audit = None
     if config["method"] == "class_aware_mmd":
         pseudo_label_audit = audit_pseudo_labels(
-            model, target_train_path, config["mmd"]["target_pseudo_label_confidence"]
+            model, target_train_path, confidence_setting(config)
         )
 
     (
@@ -709,7 +756,10 @@ def run(
             "input_dim": input_dim,
             "features": list(COMMON_FEATURES),
             "lambda_mmd": config["lambda_mmd"],
+            **({"mmd_kernel": config["mmd"]["kernel"], "mmd_scales": config["mmd"]["scales"]}
+               if config["mmd"].get("scales") else {}),
             "alpha_ce": config["alpha_ce"],
+            "pseudo_label_confidence": confidence_setting(config) if config["method"] == "class_aware_mmd" else None,
             **({"class_separation": config["class_separation"]} if "class_separation" in config else {}),
             "best_epoch": best_epoch,
             "selected_stage": "source_pretrained" if best_epoch == 0 else "adaptation",
@@ -751,9 +801,11 @@ def run(
         "architecture": "BaselineMLP shared source-target",
         "mmd_layer": "168D latent",
         "kernel": config["mmd"]["kernel"],
+        **({"mmd_scales": config["mmd"]["scales"]} if config["mmd"].get("scales") else {}),
         "bandwidth": config["mmd"]["bandwidth"],
         "lambda_mmd": config["lambda_mmd"],
         "alpha_ce": config["alpha_ce"],
+        "pseudo_label_confidence": confidence_setting(config) if config["method"] == "class_aware_mmd" else None,
         **({"class_separation": config["class_separation"]} if "class_separation" in config else {}),
         "source_checkpoint": str(source_checkpoint_path),
         "source_checkpoint_sha256": sha256(source_checkpoint_path),
