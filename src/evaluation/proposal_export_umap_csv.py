@@ -47,7 +47,7 @@ def main():
         for name, model in models.items():
             print(f'Extracting and embedding {name}...', flush=True)
             latent, _ = collect_representation(model, x)
-            # Independent unsupervised layouts: compare class structure within panels only.
+
             coords = umap.UMAP(n_neighbors=30, min_dist=0.1, n_components=2,
                                metric='euclidean', random_state=42, n_jobs=1).fit_transform(latent)
             if not np.isfinite(coords).all():

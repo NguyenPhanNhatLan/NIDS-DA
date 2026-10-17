@@ -25,6 +25,7 @@ from training.proposal_class_aware import (
     confidence_setting,
     class_separation_loss,
     class_aware_batch_stats,
+    prepare_class_batch,
 )
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.proposal_mkmmd import multi_kernel_mmd_loss
@@ -266,7 +267,7 @@ def train_mmd(
         separation_evaluated_batches = 0
         steps = 0
 
-        # One epoch follows the source loader; target batches cycle as needed.
+
         for source_x, source_y in source_loader:
             try:
                 target_x = next(target_iterator)
@@ -308,8 +309,10 @@ def train_mmd(
             source_logits = combined_logits[:batch_size]
             target_logits = combined_logits[batch_size:]
 
+            class_batch = None
             if method == "class_aware_mmd":
-                stats = class_aware_batch_stats(source_y, target_logits, confidence)
+                class_batch = prepare_class_batch(source_y, target_logits, confidence)
+                stats = class_aware_batch_stats(source_y, target_logits, confidence, batch=class_batch)
                 separation_evaluated_batches += int(len(stats['eligible_classes'])==2)
                 for label in stats['active_classes']:
                     per_class_aligned_batches[label] += int(lambda_mmd>0)
@@ -357,6 +360,7 @@ def train_mmd(
                     target_logits,
                     confidence,
                     scales=config["mmd"].get("scales"),
+                    batch=class_batch,
                 )
             else:
                 alignment_loss, bandwidth = mmd_loss(source_z, target_z)
@@ -367,6 +371,7 @@ def train_mmd(
                     source_z, source_y, target_z, target_logits,
                     confidence,
                     separation_config.get("margin", 0.5),
+                    batch=class_batch,
                 )
             loss = (alpha_ce * ce_loss + lambda_mmd * alignment_loss
                     + separation_weight * separation_loss)
@@ -463,7 +468,7 @@ def train_mmd(
             }
         history.append(row)
 
-        print(         
+        print(
             f"Epoch "
             f"{epoch:03d} | "
             f"Loss="

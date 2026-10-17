@@ -35,7 +35,7 @@ RESULT_ROOT = (
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
 
-# Basic helpers
+
 
 
 def parquet_files(directory):
@@ -47,11 +47,11 @@ def parquet_files(directory):
     return files
 
 
-# Uniform feature sampling
-# Important:
-# - reads ONLY "features"
-# - never reads intrusion labels
-# - avoids loading 2M rows into RAM
+
+
+
+
+
 
 
 def sample_features(
@@ -82,7 +82,7 @@ def sample_features(
 
     rng = np.random.default_rng(seed)
 
-    # Uniform random global row indices
+
     selected = np.sort(
         rng.choice(
             total_rows,
@@ -180,7 +180,7 @@ def sample_features(
     return result, total_rows
 
 
-# 1. KS test
+
 
 
 def compute_ks(
@@ -213,12 +213,12 @@ def compute_ks(
     return results
 
 
-# 2. Input-space MMD
-# Uses EXACTLY the existing project MMD:
-# - single RBF
-# - median heuristic
-# - biased empirical MMD²
-# Repeat subsampling to reduce sampling noise.
+
+
+
+
+
+
 
 
 def compute_input_mmd(
@@ -259,9 +259,9 @@ def compute_input_mmd(
 
         target_tensor = torch.from_numpy(target[target_index]).float()
 
-        # CPU intentionally:
-        # deterministic diagnostic,
-        # no gradient required.
+
+
+
         with torch.no_grad():
             loss, bandwidth = mmd_loss(
                 source_tensor,
@@ -294,14 +294,14 @@ def compute_input_mmd(
     }
 
 
-# 3. Domain-classifier AUC
-# domain=0 -> source
-# domain=1 -> target
-# No intrusion labels.
-# AUC ~ 0.5:
-#   domains hard to distinguish
-# AUC -> 1:
-#   strong domain shift
+
+
+
+
+
+
+
+
 
 
 def compute_domain_auc(
@@ -313,7 +313,7 @@ def compute_domain_auc(
     return domain_auc_cv(source, target, seed=seed, folds=folds)[0]
 
 
-# Run one direction
+
 
 
 def run(
@@ -339,9 +339,9 @@ def run(
 
     print(f"Target train: {target_path}")
 
-    # Different seed offsets avoid
-    # selecting identical index patterns
-    # accidentally across domains.
+
+
+
     source, source_total = sample_features(
         source_path,
         analysis_sample,
@@ -358,14 +358,14 @@ def run(
 
     print(f"Target rows: " f"{target_total:,} " f"(sample={len(target):,})")
 
-    # KS
+
 
     ks = compute_ks(
         source,
         target,
     )
 
-    # MMD
+
 
     mmd = compute_input_mmd(
         source,
@@ -375,7 +375,7 @@ def run(
         seed=seed,
     )
 
-    # Domain classifier
+
 
     domain_auc = compute_domain_auc(
         source,
@@ -384,7 +384,7 @@ def run(
         folds=cv_folds,
     )
 
-    # Provenance
+
 
     preprocessor_path = (
         revision_path("model_root", ROOT / "models/proposal_v2")
@@ -434,7 +434,7 @@ def run(
         "domain_classifier": domain_auc,
     }
 
-    # Save
+
 
     RESULT_ROOT.mkdir(
         parents=True,
@@ -459,7 +459,7 @@ def run(
 
         stream.write("\n")
 
-    # Console summary
+
 
     print("\nInput MMD²:")
 
@@ -491,7 +491,7 @@ def run(
     return result
 
 
-# CLI
+
 
 
 def fixed_kernel_mmd(source, target, bandwidth_squared):
@@ -506,7 +506,7 @@ def fixed_kernel_mmd(source, target, bandwidth_squared):
 def intrinsic_mmd(
     source, target, sample_size=2048, repeats=5, seed=42, alternative_spaces=None
 ):
-    # Float64 and a rounding-scale tolerance, rather than sampling tolerance.
+
     epsilon = 64 * np.finfo(np.float64).eps
     n = min(sample_size, len(source) // 2, len(target) // 2)
     if n < 2 or repeats < 1:
@@ -592,9 +592,9 @@ def domain_auc_cv(source, target, seed=42, folds=5):
     y = np.concatenate(
         [np.zeros(len(source), dtype=int), np.ones(len(target), dtype=int)]
     )
-    # Treat identical vectors (including missing-value locations) as one group.
+
     canonical = np.where(np.isfinite(x), x, np.nan)
-    canonical[canonical == 0] = 0  # +/-0 are the same vector.
+    canonical[canonical == 0] = 0
     x = canonical
     keys = (
         np.ascontiguousarray(canonical)
@@ -704,7 +704,7 @@ def run_intrinsic(
     )
     artifacts.update(pairs)
     artifacts.update(unsw_transformed=u, cicids_transformed=c)
-    # AUC sees common signed-log features; imputation/scaling fit inside holdout.
+
     logged_raw = {d: signed_log1p(x).astype(np.float64) for d, x in raw.items()}
     auc, auc_indices = domain_auc_cv(logged_raw["unsw"], logged_raw["cicids"], seed)
     artifacts.update({f"domain_auc_{k}": v for k, v in auc_indices.items()})

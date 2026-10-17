@@ -1,24 +1,11 @@
-"""Three-scale marginal MK-MMD for the proposal_v2 shared latent space."""
-import torch
+"""Multi-kernel MMD using the shared RBF engine."""
 
-from training.adaptation import estimate_bandwidth_squared
+from training.adaptation import kernel_mmd_loss
+
 
 def multi_kernel_mmd_loss(source_z, target_z, scales):
     if not scales or any(scale <= 0 for scale in scales):
         raise ValueError("MK-MMD bandwidth scales must be positive")
-    n = min(len(source_z), len(target_z))
-    if n < 2:
+    if min(len(source_z), len(target_z)) < 2:
         raise ValueError("MK-MMD needs at least two rows per domain")
-    source_z, target_z = source_z[:n], target_z[:n]
-    base_bandwidth_squared = estimate_bandwidth_squared(source_z, target_z)
-    d_ss = torch.cdist(source_z, source_z).square()
-    d_tt = torch.cdist(target_z, target_z).square()
-    d_st = torch.cdist(source_z, target_z).square()
-    losses = []
-    for scale in scales:
-        bandwidth_squared = base_bandwidth_squared * float(scale) ** 2
-        k_ss = torch.exp(-d_ss / (2 * bandwidth_squared))
-        k_tt = torch.exp(-d_tt / (2 * bandwidth_squared))
-        k_st = torch.exp(-d_st / (2 * bandwidth_squared))
-        losses.append(k_ss.mean() + k_tt.mean() - 2 * k_st.mean())
-    return torch.stack(losses).mean(), torch.sqrt(base_bandwidth_squared)
+    return kernel_mmd_loss(source_z, target_z, scales)

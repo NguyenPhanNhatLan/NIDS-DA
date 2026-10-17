@@ -14,7 +14,7 @@ DIRECTIONS = {
     "unsw_to_cicids": ("unsw", "cicids"),
     "cicids_to_unsw": ("cicids", "unsw"),
 }
-# 97.5th percentile of Student t(4), appropriate to exactly five paired seeds.
+
 T_CRIT_DF4 = 2.7764451051977987
 METRICS = ("pr_auc", "roc_auc", "macro_f1", "f1_attack", "recall", "fpr")
 
@@ -209,7 +209,7 @@ def load_source_baselines(root: Path) -> dict:
 
 def rq1_pairs(results: dict) -> list[dict]:
     rows = []
-    # Both models are evaluated on the EXACT SAME canonical target validation split.
+
     for eval_domain in ("cicids", "unsw"):
         in_dir = "cicids_to_unsw" if eval_domain == "cicids" else "unsw_to_cicids"
         out_dir = "unsw_to_cicids" if eval_domain == "cicids" else "cicids_to_unsw"

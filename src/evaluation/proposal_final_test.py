@@ -168,7 +168,7 @@ def run(direction, method, seed=42):
     model, threshold = validated['model'], validated['threshold']
     target, base = validated['target'], validated['base']
     checkpoint_path, result_path = validated['checkpoint_path'], validated['result_path']
-    # No target test labels are read until the complete development lock and source replay pass.
+
     test_path = base / f"{target}_test"
     test_hash = split_sha256(test_path)
     target_y, target_scores = collect_scores(

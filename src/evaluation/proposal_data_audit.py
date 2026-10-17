@@ -77,7 +77,7 @@ def audit_mapping(connection, work_root, domain, config):
             expressions.append(f'{value} AS {item["canonical_name"]}')
         expected = 'SELECT ' + ','.join(expressions) + ',label FROM read_parquet(' + sql_string(Path(work_root) / 'splits' / f'{domain}_{split}' / '*.parquet') + ')'
         actual = 'SELECT ' + ','.join(COMMON_FEATURES) + ',label FROM read_parquet(' + sql_string(Path(work_root) / 'common' / f'{domain}_{split}' / '*.parquet') + ')'
-        # EXCEPT ALL checks multiplicity as well as values/labels, independent of file order.
+
         mismatch = connection.execute(f'SELECT count(*) FROM (({expected} EXCEPT ALL {actual}) UNION ALL ({actual} EXCEPT ALL {expected}))').fetchone()[0]
         checks[split] = {'multiset_mismatches': mismatch}
     return checks

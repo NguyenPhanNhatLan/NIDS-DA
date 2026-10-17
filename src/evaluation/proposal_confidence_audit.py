@@ -9,14 +9,13 @@ import torch
 from experiments.proposal_protocol import DIRECTIONS, SEEDS
 from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
+from training.proposal_class_aware import pseudo_label_counts
 from training.data_revision import file_sha256, revision_path, verify_revision
 from training.proposal_data import ParquetBatchStream
 
 
 def batch_counts(logits, threshold):
-    confidence, labels = logits.softmax(dim=1).max(dim=1)
-    counts = torch.bincount(labels[confidence >= threshold], minlength=2)
-    return counts.tolist()
+    return pseudo_label_counts(logits, threshold)[2]
 
 
 @torch.inference_mode()
@@ -33,7 +32,7 @@ def audit(direction, seed, thresholds, device):
     model.load_state_dict(state['model_state_dict'])
     model.eval()
     base = revision_path('feature_root', None) / direction
-    # Reproduce the first training epoch's ordering and batch size.
+
     source_loader = ParquetBatchStream(base / f'{source}_train', 256, True, seed, True, drop_last=True)
     target_path = base / f'{target}_train'
     target_loader = ParquetBatchStream(target_path, 256, True, seed + 1000, False, drop_last=True)

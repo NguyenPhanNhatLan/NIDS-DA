@@ -128,7 +128,7 @@ Các cấu hình thử nghiệm không được coi là tối ưu khi chưa đá
 | `src/training/` | Trainers, losses, batch streaming và kiểm tra revision. |
 | `src/evaluation/` | Diagnostics, aggregate, development lock, final-test và CSV exporters. |
 | `src/analytics/` | Tạo bảng phân tích và BI. |
-| `src/project_utils/` | SHA-256, ánh xạ source/target và lựa chọn thiết bị dùng chung. |
+| `src/project_utils/` | SHA-256, ánh xạ source/target, chọn thiết bị và thống kê qua seeds. |
 | `tests/` | Kiểm tra loss, gradients, config và helpers. |
 
 Tools EDA, PCAP extraction, classical baselines và BI có entry point riêng;
@@ -163,3 +163,18 @@ Chi tiết: [data contract](docs/canonical_data_revision.md),
 [semantic review](docs/semantic_feature_review_20261009.md),
 [analytics](docs/analytics_pipeline.md),
 [class-aware results](docs/class_aware_ablation_results_20261017.md).
+
+Bảng tổng hợp MMD canonical và development qua 5 seeds:
+[kết quả MMD](docs/mmd_results_20261017.md).
+
+## Thành phần dùng chung
+
+- `training.adaptation.kernel_mmd_loss`: một bộ tính RBF MMD cho cả single-kernel
+  và multi-kernel; các hàm public cũ giữ vai trò wrapper để tương thích.
+- `training.proposal_class_aware.prepare_class_batch`: tạo pseudo-label, mask và
+  eligibility một lần mỗi batch; MMD, separation và batch statistics cùng dùng lại.
+- `project_utils.statistics.seed_statistics`: mean, sample std và CI Student-t
+  dùng chung cho aggregate, development summary và diagnostics.
+
+Các biến thể tiếp tục dùng chung MLP, trainer, Parquet loader và config validation.
+Refactor này không thay đổi configs, lựa chọn checkpoint hay kết quả đã lưu.

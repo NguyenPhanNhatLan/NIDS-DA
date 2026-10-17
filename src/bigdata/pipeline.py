@@ -48,7 +48,7 @@ def run(spark, inputs, work_root, feature_root, model_root, relative_error=0.001
         cleaned = spark.read.parquet(str(clean_path))
         report = profile(cleaned, domain, relative_error)
         report["input_rows"] = raw.count()
-        # Count imported columns before feature selection; never count labels as features.
+
         imported_columns = [c for c in raw.columns if c != "_source_file"]
         label_columns = [c for c in imported_columns if c in {"label", "attack_cat"}]
         report["original_columns"] = imported_columns

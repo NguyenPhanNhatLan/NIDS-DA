@@ -9,8 +9,8 @@ from pyspark.sql import SparkSession
 
 
 def get_spark() -> SparkSession:
-    # Plain Python must launch the JVM bundled with this PySpark installation.
-    # spark-submit supplies its own gateway; keep that environment untouched.
+
+
     if SparkContext._gateway is None and "PYSPARK_GATEWAY_PORT" not in os.environ:
         bundled_home = Path(pyspark.__file__).resolve().parent
         if (
@@ -30,7 +30,7 @@ def get_spark() -> SparkSession:
         "spark.sql.shuffle.partitions": "16",
         "spark.sql.files.maxPartitionBytes": "33554432",
         "spark.sql.parquet.columnarReaderBatchSize": "1024",
-        # Dirty string numerics become null and are counted by data profiling.
+
         "spark.sql.ansi.enabled": "false",
     }
     for key, value in defaults.items():

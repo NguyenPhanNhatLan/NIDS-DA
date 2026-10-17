@@ -13,19 +13,33 @@ def estimate_bandwidth_squared(source_features, target_features):
         return torch.median(positive).clamp_min(1e-6)
 
 
-def rbf_kernel(x, y, bandwidth_squared):
-    distance_squared = torch.cdist(x, y).square()
+def rbf_from_squared_distance(distance_squared, bandwidth_squared):
     return torch.exp(-distance_squared / (2.0 * bandwidth_squared))
 
 
-def mmd_loss(source_features, target_features):
-    """Biased empirical MMD², using equal-sized prefixes of the two batches."""
+def rbf_kernel(x, y, bandwidth_squared):
+    return rbf_from_squared_distance(torch.cdist(x, y).square(), bandwidth_squared)
+
+
+def kernel_mmd_loss(source_features, target_features, scales):
+    """Shared biased MMD engine, averaging RBF kernels at the requested scales."""
     batch_size = min(len(source_features), len(target_features))
     source_features = source_features[:batch_size]
     target_features = target_features[:batch_size]
     bandwidth_squared = estimate_bandwidth_squared(source_features, target_features)
-    source_kernel = rbf_kernel(source_features, source_features, bandwidth_squared)
-    target_kernel = rbf_kernel(target_features, target_features, bandwidth_squared)
-    cross_kernel = rbf_kernel(source_features, target_features, bandwidth_squared)
-    loss = source_kernel.mean() + target_kernel.mean() - 2.0 * cross_kernel.mean()
-    return loss, torch.sqrt(bandwidth_squared)
+    source_distances = torch.cdist(source_features, source_features).square()
+    target_distances = torch.cdist(target_features, target_features).square()
+    cross_distances = torch.cdist(source_features, target_features).square()
+    losses = []
+    for scale in scales:
+        scaled_bandwidth = bandwidth_squared * float(scale) ** 2
+        source_kernel = rbf_from_squared_distance(source_distances, scaled_bandwidth)
+        target_kernel = rbf_from_squared_distance(target_distances, scaled_bandwidth)
+        cross_kernel = rbf_from_squared_distance(cross_distances, scaled_bandwidth)
+        losses.append(source_kernel.mean() + target_kernel.mean() - 2.0 * cross_kernel.mean())
+    return torch.stack(losses).mean(), torch.sqrt(bandwidth_squared)
+
+
+def mmd_loss(source_features, target_features):
+    """Single-RBF MMD; retains the public API used by existing experiments."""
+    return kernel_mmd_loss(source_features, target_features, (1.0,))

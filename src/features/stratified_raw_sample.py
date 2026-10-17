@@ -79,7 +79,7 @@ def sample(path, domain, output, size, seed):
     output.mkdir(parents=True, exist_ok=True)
     with csv_output.open('x', encoding='utf-8', newline='') as stream:
         sampled.to_csv(stream, index=False)
-    # Read back the saved labels to verify the actual deliverable.
+
     saved_counts = Counter()
     for frame in pd.read_csv(csv_output, usecols=columns, chunksize=100000, dtype=str, keep_default_na=False, low_memory=False):
         saved_counts.update(strata(frame, domain).value_counts().to_dict())

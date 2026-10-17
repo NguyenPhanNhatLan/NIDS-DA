@@ -28,9 +28,9 @@ DEFAULT_SAMPLE_ROWS = 200_000
 RANDOM_STATE = 42
 
 
-# ============================================================
-# Helpers
-# ============================================================
+
+
+
 
 
 def parquet_files(directory: Path):
@@ -84,9 +84,9 @@ def read_canonical_batches(
                 yield canonical
 
 
-# ============================================================
-# 1. Exact data-quality audit
-# ============================================================
+
+
+
 
 
 def audit_quality(
@@ -160,9 +160,9 @@ def audit_quality(
     return pd.DataFrame(rows)
 
 
-# ============================================================
-# 2. Deterministic sample for expensive statistics
-# ============================================================
+
+
+
 
 
 def sample_domain(
@@ -187,7 +187,7 @@ def sample_domain(
     collected = []
     collected_rows = 0
 
-    # Slightly over-collect then sample down.
+
     pool_limit = max_rows * 2
 
     for frame in read_canonical_batches(
@@ -236,9 +236,9 @@ def sample_domain(
     return pool
 
 
-# ============================================================
-# 3. Mutual Information
-# ============================================================
+
+
+
 
 
 def compute_mutual_information(
@@ -311,9 +311,9 @@ def compute_mutual_information(
     return result
 
 
-# ============================================================
-# 4. Spearman redundancy
-# ============================================================
+
+
+
 
 
 def compute_redundancy(
@@ -359,8 +359,8 @@ def compute_redundancy(
 
             matrix.loc[f1, f2] = rho
 
-    # Feature-level summary:
-    # strongest correlation with another feature.
+
+
     rows = []
 
     for feature in feature_names:
@@ -394,9 +394,9 @@ def compute_redundancy(
     return matrix, summary
 
 
-# ============================================================
-# 5. Domain-shift diagnostic
-# ============================================================
+
+
+
 
 
 def robust_standardize(
@@ -524,9 +524,9 @@ def compute_domain_shift(
     return pd.DataFrame(rows)
 
 
-# ============================================================
-# Main direction audit
-# ============================================================
+
+
+
 
 
 def audit_direction(
@@ -541,9 +541,9 @@ def audit_direction(
     output_root,
     seed,
 ):
-    # --------------------------------------------------------
-    # MI: SOURCE LABEL ONLY
-    # --------------------------------------------------------
+
+
+
 
     mi = compute_mutual_information(
         source_sample,
@@ -558,9 +558,9 @@ def audit_direction(
         }
     )
 
-    # --------------------------------------------------------
-    # Redundancy: SOURCE only
-    # --------------------------------------------------------
+
+
+
 
     (
         corr_matrix,
@@ -570,9 +570,9 @@ def audit_direction(
         feature_names,
     )
 
-    # --------------------------------------------------------
-    # Domain shift: source vs unlabeled target
-    # --------------------------------------------------------
+
+
+
 
     shift = compute_domain_shift(
         source_sample,
@@ -580,9 +580,9 @@ def audit_direction(
         feature_names,
     )
 
-    # --------------------------------------------------------
-    # Quality merge
-    # --------------------------------------------------------
+
+
+
 
     qs = quality_source.drop(columns=["domain"]).rename(
         columns={
@@ -638,10 +638,10 @@ def audit_direction(
         ]
     ].min(axis=1)
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # This is a REVIEW flag, not automatic feature selection.
-    # --------------------------------------------------------
+
+
+
+
 
     result["quality_flag_098"] = result["min_finite_rate"] < 0.98
 
@@ -688,9 +688,9 @@ def audit_direction(
     print(f"Saved: {corr_path}")
 
 
-# ============================================================
-# Entry point
-# ============================================================
+
+
+
 
 
 def main():
@@ -736,9 +736,9 @@ def main():
 
     print(", ".join(feature_names))
 
-    # --------------------------------------------------------
-    # Exact quality: ALL training rows
-    # --------------------------------------------------------
+
+
+
 
     print("\nComputing exact UNSW quality...")
 
@@ -778,9 +778,9 @@ def main():
 
     print(f"Saved: {quality_path}")
 
-    # --------------------------------------------------------
-    # Samples for expensive diagnostics
-    # --------------------------------------------------------
+
+
+
 
     print(f"\nSampling up to " f"{args.sample_rows:,} UNSW rows...")
 
@@ -806,9 +806,9 @@ def main():
 
     print(f"CICIDS sample rows: " f"{len(cicids_sample):,}")
 
-    # --------------------------------------------------------
-    # Direction 1
-    # --------------------------------------------------------
+
+
+
 
     audit_direction(
         direction="unsw_to_cicids",
@@ -823,9 +823,9 @@ def main():
         seed=args.seed,
     )
 
-    # --------------------------------------------------------
-    # Direction 2
-    # --------------------------------------------------------
+
+
+
 
     audit_direction(
         direction="cicids_to_unsw",

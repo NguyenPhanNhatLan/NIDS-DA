@@ -198,7 +198,7 @@ class ParquetRows(IterableDataset):
                     features = torch.from_numpy(features)
                     labels = torch.tensor(labels, dtype=torch.long)
 
-                    # Chỉ xáo trộn trong từng phần đang đọc, không nạp cả tập vào RAM.
+
                     row_indices = np.arange(len(labels))
                     if self.training:
                         rng.shuffle(row_indices)

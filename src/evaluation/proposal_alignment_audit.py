@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from evaluation.proposal_aggregate import seed_statistics
+from project_utils.statistics import seed_statistics
 from evaluation.proposal_latent_knn_audit import agreements
 from evaluation.proposal_negative_transfer import load_models, sample_labeled, FEATURE_ROOT
 from experiments.proposal_protocol import DIRECTIONS, SEEDS
@@ -73,7 +73,7 @@ def paired_mmd(before_s, before_t, after_s, after_t, sample_size, repeats, seed)
         ti = rng.choice(len(before_t), n, replace=False)
         s, t, a, b = [torch.from_numpy(x) for x in
                       (before_s[si], before_t[ti], after_s[si], after_t[ti])]
-        # One baseline bandwidth per paired subsample, shared before and after.
+
         bandwidth = estimate_bandwidth_squared(s, t)
         for left, right, values in ((s,t,before), (a,b,after)):
             value = (rbf_kernel(left,left,bandwidth).mean()
@@ -88,7 +88,7 @@ def paired_mmd(before_s, before_t, after_s, after_t, sample_size, repeats, seed)
 def run(args):
     config = load_config(args.config)
     revision = verify_revision()
-    # Complete matrix and provenance preflight happens before creating output.
+
     for seed in args.seeds:
         load_models(args.direction, seed, args.config)
     source, target = args.direction.split('_to_')

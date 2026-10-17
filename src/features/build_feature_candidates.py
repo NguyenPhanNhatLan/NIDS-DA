@@ -85,7 +85,7 @@ def build_candidates():
     unsw = pd.read_csv(UNSW_PATH)
     cicids = pd.read_csv(CICIDS_PATH)
 
-    # Labels must never be feature candidates.
+
     unsw = unsw[unsw["category"] != "label"].copy()
     cicids = cicids[cicids["category"] != "label"].copy()
 

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def revision_manifest():
     path = os.environ.get('KLTN_DATA_MANIFEST', str(ROOT / 'data/revisions/canonical/manifest.json'))
     if not path:
-        # Explicitly empty is reserved for isolated synthetic test fixtures.
+
         return None
     if not Path(path).is_file():
         raise FileNotFoundError(
@@ -23,7 +23,7 @@ def revision_manifest():
 
 
 def revision_path(kind, fallback):
-    # Resolve CLI defaults on a fresh checkout; verification remains mandatory at runtime.
+
     default_manifest = ROOT / "data/revisions/canonical/manifest.json"
     if "KLTN_DATA_MANIFEST" not in os.environ and not default_manifest.exists():
         roots = {
@@ -48,7 +48,7 @@ def verify_revision():
     for artifact in manifest['frozen_files']:
         if file_sha256(artifact['path']) != artifact['sha256']:
             raise ValueError(f"Frozen data/preprocessing changed: {artifact['path']}")
-    # Reject added/removed Parquets as well as byte mutations.
+
     expected = {a['path'] for a in manifest['frozen_files'] if a['path'].endswith('.parquet')}
     actual = {str(p.resolve()) for kind in ('common_root', 'feature_root')
               for p in Path(manifest[kind]).rglob('*.parquet')}

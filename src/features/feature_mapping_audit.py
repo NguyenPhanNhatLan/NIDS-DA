@@ -96,7 +96,7 @@ def main():
     unsw = pd.read_csv(UNSW_DICTIONARY)
 
     cicids = pd.read_csv(CICIDS_DICTIONARY)
-    
+
     unsw_meta = unsw[
         [
             "feature",
@@ -171,9 +171,9 @@ def main():
         + audit["cicids_reference"].fillna("")
     )
 
-    # -------------------------
-    # Final thesis-friendly table
-    # -------------------------
+
+
+
 
     columns = [
         "unsw_feature",

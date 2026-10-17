@@ -150,7 +150,7 @@ def build_tables(result_root, dataset_manifest=None):
     for path in sorted(result_root.rglob('*.json')):
         parts = path.relative_to(result_root).parts
         family = parts[0]
-        # Historical tags/config sweeps are outside the four-method frozen suite.
+
         if family == 'mmd' and (len(parts) < 2 or not any(parts[1] == f'target_val_epoch0_{stem}' for stem in CONFIG_METHOD)):
             ignored.append(str(path)); continue
         if family not in ('source_only_target_val', 'mmd', 'domain_shift', 'diagnostics_target_val', 'aggregate', 'final_target_test'):
@@ -243,7 +243,7 @@ def build_tables(result_root, dataset_manifest=None):
         if data.get('protocol') != 'proposal_v2':
             raise ValueError('Wrong dataset manifest protocol')
         inputs[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
-        # The full data manifest is authoritative; do not duplicate its domain counts by direction.
+
         dataset_rows.clear()
         grouped = defaultdict(lambda: [0, 0])
         for row in data['counts']['class_counts']:
@@ -256,8 +256,8 @@ def build_tables(result_root, dataset_manifest=None):
     shift_keys = [(row['direction'], row['seed'], row['feature']) for row in tables['feature_shift']]
     if len(set(shift_keys)) != len(shift_keys):
         raise ValueError('Duplicate feature-shift observations')
-    # Aggregate per_run omits method config metadata. Fill only from a unique
-    # observed config for that same method/direction/phase; reject mixed suites.
+
+
     suite_groups = defaultdict(list)
     for row in runs.values():
         suite_groups[(row['direction'], row['method'], row['phase'])].append(row)
@@ -291,7 +291,7 @@ def build_tables(result_root, dataset_manifest=None):
                 ci95_low=mean-width if width is not None else None, ci95_high=mean+width if width is not None else None,
                 ci_method='student_t_across_paired_seeds' if metric == 'adaptation_gain' else 'student_t_across_seeds',
                 seeds_json=json.dumps([row['seed'] for row in valid]), summary_source='derived_from_per_run', source_file=None))
-    # Aggregate summaries must agree with the exported development facts, not count them twice.
+
     for data, path in summaries:
         for summary in data['summary']:
             for metric, stats in summary['metrics'].items():

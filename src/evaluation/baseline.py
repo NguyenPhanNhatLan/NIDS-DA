@@ -228,7 +228,7 @@ def evaluate_ap(
 
 
 def evaluate_dataset(dataset, seed=42):
-    # Import trong hàm để training có thể dùng evaluate_ap mà không bị import vòng.
+
     from training.baseline import make_loader
 
     checkpoint_path = PROJECT_DIR / "models" / "baselines" / f"{dataset}_seed{seed}.pt"

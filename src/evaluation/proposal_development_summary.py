@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from evaluation.proposal_aggregate import seed_statistics
+from project_utils.statistics import seed_statistics
 from experiments.proposal_protocol import DIRECTIONS, SEEDS
 from training.data_revision import verify_revision
 from training.proposal_mmd import load_config, output_paths, sha256, SOURCE_ONLY_ROOT

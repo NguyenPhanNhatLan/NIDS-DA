@@ -8,7 +8,8 @@ import numpy as np
 import pyarrow.parquet as pq
 from sklearn.neighbors import NearestNeighbors
 
-from evaluation.proposal_aggregate import result_path, seed_statistics
+from evaluation.proposal_aggregate import result_path
+from project_utils.statistics import seed_statistics
 from evaluation.proposal_negative_transfer import (
     FEATURE_ROOT, ROOT, collect_representation, domains, load_models, sha256,
 )
@@ -45,7 +46,7 @@ def agreements(query, reference, query_y, reference_y, ks, metric, same_domain=F
                                algorithm='brute', n_jobs=1).fit(reference)
     indices = nearest.kneighbors(query, return_distance=False)
     if same_domain:
-        # Remove the actual self index, not blindly the first tied neighbor.
+
         indices = np.array([row[row != i][:max(ks)] for i, row in enumerate(indices)])
     return {k: (reference_y[indices[:, :k]] == query_y[:, None]).mean(axis=1) for k in ks}
 

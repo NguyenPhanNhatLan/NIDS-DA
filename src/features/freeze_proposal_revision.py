@@ -114,9 +114,9 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve',
             for file in sorted(source.glob('*.parquet')):
                 target = destination / file.name
                 shutil.copyfile(file, target)
-    # Float32/log/scaling can collapse different raw keys. Move every group
-    # crossing a split in either direction to its furthest held-out partition.
-    # This is a purity audit, not a label-based choice or performance tuning.
+
+
+
     arrays, labels, memberships, keep = {}, {}, {}, {}
     for d in DOMAINS:
         chunks, ys, splits = [], [], []
@@ -143,7 +143,7 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve',
             for d in DOMAINS:
                 indices = np.flatnonzero(keep[d])
                 values = processor.transform(arrays[d][indices]).astype(np.float32)
-                values[values == 0] = 0  # Normalize signed zero for byte-key comparisons.
+                values[values == 0] = 0
                 table = pa.table({**{n: values[:, i] for i, n in enumerate(COMMON_FEATURES)},
                                   'split': memberships[d][indices]})
                 connection.register('precision_rows', table)
@@ -196,7 +196,7 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve',
     for d in DOMAINS:
         for i, s in enumerate(SPLITS):
             destination = common_root / f'{d}_{s}'
-            # These are newly created snapshot copies, never original files.
+
             for copied in destination.glob('*.parquet'):
                 copied.unlink()
             selected = keep[d] & (memberships[d] == i)
@@ -219,7 +219,7 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve',
     }, indent=2) + '\n')
     bind(snapshot / 'canonical_quality.json')
     del arrays, labels, memberships, keep
-    # Verify original raw inputs and source manifest are bound to this snapshot.
+
     source_manifest_path = Path(audit['source_manifest']['path'])
     if file_sha256(source_manifest_path) != audit['source_manifest']['sha256']:
         raise ValueError('Source manifest changed since audit')
@@ -297,7 +297,7 @@ def freeze(audit_path, revision='canonical', conflict_policy='preserve',
                     raise ValueError('Prepared/common row count mismatch')
                 counts[direction][f'{d}_{s}'] = rows
                 bind(output)
-    # Independent audit of the files written to disk, not just in-memory arrays.
+
     c = duckdb.connect()
     c.execute("SET threads=2")
     c.execute("SET memory_limit='1GB'")

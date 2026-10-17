@@ -38,8 +38,8 @@ def run(output, work_root):
         rows = c.execute('SELECT count(*) FROM raw_identity').fetchone()[0]
         label = ('CASE WHEN try_cast(trim(label) AS DOUBLE) IN (0,1) THEN try_cast(trim(label) AS INTEGER) END'
                  if d == 'unsw' else "CASE WHEN upper(trim(label))='BENIGN' THEN 0 WHEN trim(label)<>'' AND NOT regexp_full_match(trim(label),'[+-]?[0-9]+(\\.[0-9]+)?') THEN 1 END")
-        # Hash only partitions the work; equality remains exact across all columns.
-        # Conflicting labels for the same identity always belong to the same bucket.
+
+
         unique_rows = conflict_groups = conflict_rows = 0
         with tempfile.TemporaryDirectory(prefix=f'raw-audit-{d}-', dir=output.parent) as scratch:
             partition_root = Path(scratch) / 'partitioned'

@@ -32,7 +32,7 @@ def count_csv_rows(path: Path) -> int:
     with path.open("r", encoding="utf-8", errors="ignore") as stream:
         rows = sum(1 for _ in stream)
 
-    # remove header
+
     return max(0, rows - 1)
 
 
@@ -85,8 +85,8 @@ def extract_directory(
     executable: str,
     extractor_version: str,
 ):
-    # Prefer the CLI installed alongside the Python running this script.
-    # Invoking .venv/bin/python does not itself add .venv/bin to PATH.
+
+
     local_cli = Path(sys.executable).parent / executable
     executable_path = (
         shutil.which(str(local_cli))
