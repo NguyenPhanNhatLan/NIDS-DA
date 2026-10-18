@@ -14,14 +14,15 @@ INPUT_DIM = len(COMMON_FEATURES)
 
 
 def split_sha256(path):
-   
+    """Hash file names and contents in the order used by the batch stream."""
+
     files = sorted(Path(path).glob("*.parquet"))
     if not files:
         raise FileNotFoundError(f"No Parquet files in {path}")
     digest = hashlib.sha256()
-    for file in files:
-        digest.update(file.name.encode())
-        with file.open("rb") as stream:
+    for parquet_path in files:
+        digest.update(parquet_path.name.encode())
+        with parquet_path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()
@@ -30,6 +31,7 @@ def split_sha256(path):
 def iter_parquet_batches(
     path, batch_size, shuffle, seed, include_labels, drop_last=False
 ):
+    """Carry partial batches across files; shuffle files and each Arrow batch."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     files = sorted(Path(path).glob("*.parquet"))
@@ -39,50 +41,50 @@ def iter_parquet_batches(
     if shuffle:
         rng.shuffle(files)
     columns = ["features", "label"] if include_labels else ["features"]
-    pending_x = np.empty((0, INPUT_DIM), dtype=np.float32)
-    pending_y = np.empty(0, dtype=np.int64)
-    for file in files:
-        with pq.ParquetFile(file) as parquet:
+    pending_features = np.empty((0, INPUT_DIM), dtype=np.float32)
+    pending_labels = np.empty(0, dtype=np.int64)
+    for parquet_path in files:
+        with pq.ParquetFile(parquet_path) as parquet:
             for batch in parquet.iter_batches(
                 batch_size=max(8192, batch_size), columns=columns
             ):
                 vectors = batch.column("features")
-                x = vector_matrix(vectors, file)
+                feature_values = vector_matrix(vectors, parquet_path)
                 if include_labels:
-                    y = np.asarray(
+                    label_values = np.asarray(
                         batch.column("label").to_numpy(zero_copy_only=False),
                         dtype=np.int64,
                     )
-                    if not np.isin(y, [0, 1]).all():
-                        raise ValueError(f"Invalid labels in {file}")
+                    if not np.isin(label_values, [0, 1]).all():
+                        raise ValueError(f"Invalid labels in {parquet_path}")
                 if shuffle:
-                    order = rng.permutation(len(x))
-                    x = x[order]
+                    order = rng.permutation(len(feature_values))
+                    feature_values = feature_values[order]
                     if include_labels:
-                        y = y[order]
-                if len(pending_x):
-                    x = np.concatenate((pending_x, x))
+                        label_values = label_values[order]
+                if len(pending_features):
+                    feature_values = np.concatenate((pending_features, feature_values))
                     if include_labels:
-                        y = np.concatenate((pending_y, y))
-                full = len(x) // batch_size * batch_size
-                for start in range(0, full, batch_size):
+                        label_values = np.concatenate((pending_labels, label_values))
+                complete_rows = len(feature_values) // batch_size * batch_size
+                for start in range(0, complete_rows, batch_size):
                     features = torch.from_numpy(
-                        np.array(x[start : start + batch_size], copy=True)
+                        np.array(feature_values[start : start + batch_size], copy=True)
                     )
                     if include_labels:
                         labels = torch.from_numpy(
-                            np.array(y[start : start + batch_size], copy=True)
+                            np.array(label_values[start : start + batch_size], copy=True)
                         )
                         yield features, labels
                     else:
                         yield features
-                pending_x = x[full:].copy()
+                pending_features = feature_values[complete_rows:].copy()
                 if include_labels:
-                    pending_y = y[full:].copy()
-    if len(pending_x) and not drop_last:
-        features = torch.from_numpy(np.array(pending_x, copy=True))
+                    pending_labels = label_values[complete_rows:].copy()
+    if len(pending_features) and not drop_last:
+        features = torch.from_numpy(np.array(pending_features, copy=True))
         if include_labels:
-            yield features, torch.from_numpy(np.array(pending_y, copy=True))
+            yield features, torch.from_numpy(np.array(pending_labels, copy=True))
         else:
             yield features
 

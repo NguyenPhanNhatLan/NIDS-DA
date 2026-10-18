@@ -19,12 +19,12 @@ def fit_source_processor(source_train_path, spark=None, relative_error=0.001):
     from bigdata.preprocess import fit_source_processor as spark_fit
     from spark_session import get_spark
 
-    owned = spark is None
+    created_spark_session = spark is None
     spark = spark or get_spark()
     try:
         return spark_fit(spark.read.parquet(str(source_train_path)), relative_error)
     finally:
-        if owned:
+        if created_spark_session:
             spark.stop()
 
 
@@ -61,7 +61,7 @@ def prepare_direction(
             raise FileExistsError(
                 f"Proposal preprocessing output already exists: {path}"
             )
-    owned = spark is None
+    created_spark_session = spark is None
     spark = spark or get_spark()
     try:
         processor = fit_source_processor(
@@ -74,7 +74,7 @@ def prepare_direction(
             write_prepared(frame, output_base / f"{domain}_{split}", processor)
         return processor
     finally:
-        if owned:
+        if created_spark_session:
             spark.stop()
 
 

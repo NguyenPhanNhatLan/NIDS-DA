@@ -1,5 +1,3 @@
-"""Aggregate five-seed proposal_v2 development results without reading test data."""
-
 import argparse
 import json
 from pathlib import Path

@@ -1,3 +1,5 @@
+"""Map UNSW and CICIDS columns to the shared feature schema."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,16 +20,9 @@ COMMON_FEATURES = tuple(
 
 def load_common_feature_config(path=DEFAULT_CONFIG):
     config = json.loads(Path(path).read_text())
-
     required = {
-        "canonical_name",
-        "unsw",
-        "cicids",
-        "direction",
-        "transform",
-        "reason",
+        "canonical_name", "unsw", "cicids", "direction", "transform", "reason",
     }
-
     if (
         not isinstance(config, list)
         or not config
@@ -36,96 +31,46 @@ def load_common_feature_config(path=DEFAULT_CONFIG):
         raise ValueError("Invalid common feature config")
 
     names = [item["canonical_name"] for item in config]
-
     if len(names) != len(set(names)):
         raise ValueError("Duplicate canonical names")
-
     return config
 
 
-def canonicalize_column(
-    frame,
-    item,
-    domain,
-):
-    if domain not in {
-        "unsw",
-        "cicids",
-    }:
+def canonicalize_column(frame, item, domain):
+    if domain not in {"unsw", "cicids"}:
         raise ValueError(f"Unknown domain: {domain}")
-
     source_column = item[domain]
-
     if source_column not in frame.columns:
-        raise ValueError(f"Missing {domain} column: " f"{source_column}")
+        raise ValueError(f"Missing {domain} column: {source_column}")
 
-    values = pd.to_numeric(
-        frame[source_column],
-        errors="coerce",
-    ).to_numpy(
-        dtype=np.float64,
-        na_value=np.nan,
-        copy=True,
+    values = pd.to_numeric(frame[source_column], errors="coerce").to_numpy(
+        dtype=np.float64, na_value=np.nan, copy=True,
     )
-
     values[~np.isfinite(values)] = np.nan
 
     transform = item["transform"]
-
     if transform == "cicids_us_to_seconds":
-
         if domain == "cicids":
             values /= 1_000_000.0
-
     elif transform == "unsw_ms_cicids_us_to_seconds":
-
-        if domain == "unsw":
-            values /= 1_000.0
-
-        else:
-            values /= 1_000_000.0
-
-    elif transform == "none":
-        pass
-
-    else:
+        values /= 1_000.0 if domain == "unsw" else 1_000_000.0
+    elif transform != "none":
         raise ValueError(f"Unknown transform: {transform}")
-
     return values.astype(np.float32)
 
 
-def canonicalize_frame(
-    frame,
-    domain,
-    config,
-):
+def canonicalize_frame(frame, domain, config):
     if domain not in {"unsw", "cicids"}:
         raise ValueError(domain)
-
-    result = {}
-
-    for item in config:
-
-        result[item["canonical_name"]] = canonicalize_column(
-            frame,
-            item,
-            domain,
-        )
-
-    output = pd.DataFrame(result)
-
+    output = pd.DataFrame({
+        item["canonical_name"]: canonicalize_column(frame, item, domain)
+        for item in config
+    })
     if "label" not in frame.columns:
         raise ValueError("Missing label")
-
     output["label"] = (
-        pd.to_numeric(
-            frame["label"],
-            errors="raise",
-        )
-        .astype(np.int64)
-        .to_numpy()
+        pd.to_numeric(frame["label"], errors="raise").astype(np.int64).to_numpy()
     )
-
     return output
 
 
@@ -136,112 +81,61 @@ def _input_files(directory):
     return files
 
 
+def _check_split_columns(split_root, domain, source_columns):
+    required = set(source_columns + ["label"])
+    for split in ("train", "val", "test"):
+        for path in _input_files(split_root / f"{domain}_{split}"):
+            missing = required - set(pq.read_schema(path).names)
+            if missing:
+                raise ValueError(f"Missing configured columns in {path}: {sorted(missing)}")
+
+
+def _write_common_feature_split(source_dir, destination, domain, config):
+    if destination.exists():
+        raise FileExistsError(f"Output already exists: {destination}")
+    destination.mkdir(parents=True, exist_ok=False)
+    source_columns = [item[domain] for item in config]
+    names = [item["canonical_name"] for item in config]
+
+    for file_index, source in enumerate(_input_files(source_dir)):
+        with pq.ParquetFile(source) as parquet:
+            batches = parquet.iter_batches(
+                batch_size=65536, columns=source_columns + ["label"],
+            )
+            for batch_index, batch in enumerate(batches):
+                transformed = canonicalize_frame(batch.to_pandas(), domain, config)
+                matrix = transformed[names].to_numpy(dtype=np.float32, copy=True)
+                vectors = pa.array(
+                    matrix.tolist(), type=pa.list_(pa.float32(), len(names)),
+                )
+                labels = transformed["label"].to_numpy(dtype=np.int64)
+                if not np.isin(labels, [0, 1]).all():
+                    raise ValueError(f"Invalid binary labels in {source}")
+                table = pa.table({"features": vectors, "label": pa.array(labels)})
+                output_file = destination / f"part-{file_index:04d}-{batch_index:04d}.parquet"
+                pq.write_table(table, output_file, compression="snappy")
+
+
 def generate_raw_common_feature_datasets(
     split_root=ROOT / "data/splits_v2",
     output_root=ROOT / "data/features/common_raw2",
     config_path=DEFAULT_CONFIG,
 ):
     config = load_common_feature_config(config_path)
-
     split_root = Path(split_root)
     output_root = Path(output_root)
 
-    names = [item["canonical_name"] for item in config]
-
     for domain in ("unsw", "cicids"):
-
         source_columns = [item[domain] for item in config]
-
+        _check_split_columns(split_root, domain, source_columns)
         for split in ("train", "val", "test"):
-
-            source_dir = split_root / f"{domain}_{split}"
-
-            for path in _input_files(source_dir):
-
-                available = set(pq.read_schema(path).names)
-
-                required = set(source_columns + ["label"])
-
-                missing = required - available
-
-                if missing:
-                    raise ValueError(
-                        f"Missing configured columns " f"in {path}: {sorted(missing)}"
-                    )
-
-        for split in ("train", "val", "test"):
-
-            source_dir = split_root / f"{domain}_{split}"
-
-            destination = output_root / f"{domain}_{split}"
-
-            if destination.exists():
-                raise FileExistsError(f"Output already exists: " f"{destination}")
-
-            destination.mkdir(
-                parents=True,
-                exist_ok=False,
+            _write_common_feature_split(
+                split_root / f"{domain}_{split}",
+                output_root / f"{domain}_{split}",
+                domain,
+                config,
             )
-
-            for file_index, source in enumerate(_input_files(source_dir)):
-
-                with pq.ParquetFile(source) as parquet:
-
-                    for batch_index, batch in enumerate(
-                        parquet.iter_batches(
-                            batch_size=65536,
-                            columns=source_columns + ["label"],
-                        )
-                    ):
-
-                        transformed = canonicalize_frame(
-                            batch.to_pandas(),
-                            domain,
-                            config,
-                        )
-
-                        matrix = transformed[names].to_numpy(
-                            dtype=np.float32,
-                            copy=True,
-                        )
-
-                        vectors = pa.array(
-                            matrix.tolist(),
-                            type=pa.list_(
-                                pa.float32(),
-                                len(names),
-                            ),
-                        )
-
-                        labels = transformed["label"].to_numpy(dtype=np.int64)
-
-                        if not np.isin(
-                            labels,
-                            [0, 1],
-                        ).all():
-                            raise ValueError(f"Invalid binary labels " f"in {source}")
-
-                        table = pa.table(
-                            {
-                                "features": vectors,
-                                "label": pa.array(labels),
-                            }
-                        )
-
-                        output_file = destination / (
-                            f"part-"
-                            f"{file_index:04d}-"
-                            f"{batch_index:04d}"
-                            ".parquet"
-                        )
-
-                        pq.write_table(
-                            table,
-                            output_file,
-                            compression="snappy",
-                        )
-
-    return names
+    return [item["canonical_name"] for item in config]
 
 
 def main():
