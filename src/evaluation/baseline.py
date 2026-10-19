@@ -94,10 +94,7 @@ def collect_scores(
 
             _, logits = model(features)
 
-            probabilities = torch.softmax(
-                logits,
-                dim=1,
-            )[:, 1]
+            probabilities = torch.softmax(logits, dim=1)[:, 1]
 
             all_labels.append(labels.numpy())
 
@@ -106,20 +103,14 @@ def collect_scores(
     if not all_labels:
         raise ValueError("Evaluation loader is empty.")
 
-    return (
-        np.concatenate(all_labels),
-        np.concatenate(all_scores),
-    )
+    return (np.concatenate(all_labels), np.concatenate(all_scores))
 
 
 def select_f1_threshold(
     labels,
     scores,
 ):
-    precision, recall, thresholds = precision_recall_curve(
-        labels,
-        scores,
-    )
+    precision, recall, thresholds = precision_recall_curve(labels, scores)
 
     if len(thresholds) == 0:
         return 0.5
@@ -148,49 +139,22 @@ def compute_metrics(
 ):
     predictions = (scores >= threshold).astype(int)
 
-    tn, fp, fn, tp = confusion_matrix(
-        labels,
-        predictions,
-        labels=[0, 1],
-    ).ravel()
+    tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
 
-    ap = average_precision_score(
-        labels,
-        scores,
-    )
+    ap = average_precision_score(labels, scores)
 
     if len(np.unique(labels)) == 2:
-        roc_auc = roc_auc_score(
-            labels,
-            scores,
-        )
+        roc_auc = roc_auc_score(labels, scores)
     else:
         roc_auc = float("nan")
 
-    precision = precision_score(
-        labels,
-        predictions,
-        zero_division=0,
-    )
+    precision = precision_score(labels, predictions, zero_division=0)
 
-    recall = recall_score(
-        labels,
-        predictions,
-        zero_division=0,
-    )
+    recall = recall_score(labels, predictions, zero_division=0)
 
-    macro_f1 = f1_score(
-        labels,
-        predictions,
-        average="macro",
-        zero_division=0,
-    )
+    macro_f1 = f1_score(labels, predictions, average='macro', zero_division=0)
 
-    f1 = f1_score(
-        labels,
-        predictions,
-        zero_division=0,
-    )
+    f1 = f1_score(labels, predictions, zero_division=0)
 
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
 

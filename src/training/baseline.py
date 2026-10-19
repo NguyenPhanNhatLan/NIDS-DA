@@ -1,5 +1,4 @@
 from copy import deepcopy
-import random
 import json
 from pathlib import Path
 
@@ -7,11 +6,12 @@ import numpy as np
 import pyarrow.parquet as pq
 import torch
 import torch.optim as optim
-from torch import nn
 from torch.utils.data import DataLoader, IterableDataset
 
 from evaluation.baseline import evaluate_ap
 from models.baseline import BaselineMLP
+from project_utils import get_device
+from training.common import balanced_cross_entropy, set_seed
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 FEATURE_DIR = PROJECT_DIR / "data" / "features"
@@ -28,117 +28,48 @@ def train_baseline(
     min_delta=1e-4,
 ):
     device = next(model.parameters()).device
-
-    counts = torch.as_tensor(
-        counts,
-        dtype=torch.float32,
-    )
-
-    if (counts == 0).any():
-        raise ValueError("Training data must " "contain both classes.")
-
-    class_weights = (counts.sum() / (2 * counts)).to(device)
-
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-
-    optimizer = optim.Adam(
-        model.parameters(),
-        lr=lr,
-        weight_decay=1e-4,
-    )
-
-    best_ap = -np.inf
-    best_epoch = -1
-    best_state = None
-
+    criterion = balanced_cross_entropy(counts, device)
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    best_ap, best_epoch, best_state = -np.inf, -1, None
     epochs_without_improvement = 0
 
     print("-- Start Training --")
-
-    for epoch in range(
-        1,
-        epochs + 1,
-    ):
+    for epoch in range(1, epochs + 1):
         model.train()
-
-        loss_sum = 0.0
-        batches = 0
-
-        for X, y in train_loader:
-            X = X.to(device)
-            y = y.to(device)
-
+        loss_sum, batches = 0.0, 0
+        for features, labels in train_loader:
+            features, labels = features.to(device), labels.to(device)
             optimizer.zero_grad()
-
-            _, logits = model(X)
-
-            loss = criterion(
-                logits,
-                y,
-            )
-
+            _, logits = model(features)
+            loss = criterion(logits, labels)
             loss.backward()
-
             optimizer.step()
-
             loss_sum += loss.item()
             batches += 1
-
         if batches == 0:
             raise ValueError("No training batches.")
 
-        val_ap = evaluate_ap(
-            model,
-            val_loader,
-            device,
-        )
-
+        val_ap = evaluate_ap(model, val_loader, device)
         train_loss = loss_sum / batches
-
-        print(
-            f"Epoch {epoch:03d} | " f"Loss={train_loss:.5f} | " f"Val AP={val_ap:.5f}"
-        )
+        print(f"Epoch {epoch:03d} | Loss={train_loss:.5f} | Val AP={val_ap:.5f}")
 
         improvement = val_ap - best_ap
-
         if val_ap > best_ap:
-            best_ap = val_ap
-            best_epoch = epoch
-
+            best_ap, best_epoch = val_ap, epoch
             best_state = deepcopy(model.state_dict())
-
         if improvement > min_delta:
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
-
         if epochs_without_improvement >= patience:
             print("Early stopping.")
             break
 
     if best_state is None:
         raise RuntimeError("No checkpoint selected.")
-
     model.load_state_dict(best_state)
-
-    print(f"Best epoch={best_epoch} | " f"Best validation AP={best_ap:.5f}")
-
-    return (
-        model,
-        best_epoch,
-        best_ap,
-    )
-
-
-def set_seed(seed):
-    random.seed(seed)
-
-    np.random.seed(seed)
-
-    torch.manual_seed(seed)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    print(f"Best epoch={best_epoch} | Best validation AP={best_ap:.5f}")
+    return model, best_epoch, best_ap
 
 
 def evaluate_f1(model, val_loader, device):
@@ -198,7 +129,6 @@ class ParquetRows(IterableDataset):
                     features = torch.from_numpy(features)
                     labels = torch.tensor(labels, dtype=torch.long)
 
-
                     row_indices = np.arange(len(labels))
                     if self.training:
                         rng.shuffle(row_indices)
@@ -209,12 +139,7 @@ class ParquetRows(IterableDataset):
 
 def make_loader(path, input_dim, batch_size=256, training=False):
     dataset = ParquetRows(path, input_dim, training)
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=0,
-        drop_last=training,
-    )
+    return DataLoader(dataset, batch_size=batch_size, num_workers=0, drop_last=training)
 
 
 def main():
@@ -222,17 +147,9 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--dataset",
-        choices=["unsw", "cicids"],
-        required=True,
-    )
+    parser.add_argument('--dataset', choices=['unsw', 'cicids'], required=True)
 
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-    )
+    parser.add_argument('--seed', type=int, default=42)
 
     args = parser.parse_args()
 
@@ -258,10 +175,7 @@ def main():
 
     attack_count = int(metadata["class_counts"]["1"])
 
-    counts = [
-        normal_count,
-        attack_count,
-    ]
+    counts = [normal_count, attack_count]
 
     train_loader = make_loader(
         FEATURE_DIR / f"{dataset}_train",
@@ -269,20 +183,9 @@ def main():
         training=True,
     )
 
-    val_loader = make_loader(
-        FEATURE_DIR / f"{dataset}_val",
-        input_dim,
-        training=False,
-    )
+    val_loader = make_loader(FEATURE_DIR / f'{dataset}_val', input_dim, training=False)
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-
-    else:
-        device = torch.device("cpu")
+    device = get_device()
 
     print(f"Dataset: {dataset}")
 
@@ -307,10 +210,7 @@ def main():
 
     model_dir = PROJECT_DIR / "models" / "baselines"
 
-    model_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     output_path = model_dir / f"{dataset}_seed{seed}.pt"
 

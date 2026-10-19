@@ -19,7 +19,8 @@ from features.parquet_vectors import vector_matrix
 from models.baseline import BaselineMLP
 from training.adaptation import estimate_bandwidth_squared, mmd_loss, rbf_kernel
 from training.proposal_data import ParquetBatchStream, split_sha256
-from training.proposal_mmd import freeze_bn_stats, output_paths
+from training.common import freeze_bn_stats
+from training.proposal_mmd import output_paths
 
 from training.data_revision import revision_path, verify_revision
 from project_utils import sha256

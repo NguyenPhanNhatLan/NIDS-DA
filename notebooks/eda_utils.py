@@ -46,7 +46,7 @@ IDENTIFIERS = {
 
 
 def dictionary_types(root, domain):
-    path = Path(root) / "docs/data_dictionary" / f"feature_dictionary_{domain}.csv"
+    path = Path(root) / "configs/data_dictionary" / f"feature_dictionary_{domain}.csv"
     with path.open(encoding="utf-8-sig", newline="") as stream:
         return {row["feature"]: row["feature_type"] for row in csv.DictReader(stream)}
 

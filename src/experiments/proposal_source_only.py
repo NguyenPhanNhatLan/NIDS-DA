@@ -9,7 +9,8 @@ import torch
 from evaluation.baseline import collect_scores, compute_metrics, select_f1_threshold
 from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
-from training.baseline import set_seed, train_baseline
+from training.baseline import train_baseline
+from training.common import set_seed
 from training.proposal_data import ParquetBatchStream, split_sha256
 from training.data_revision import revision_path, verify_revision, require_development_open
 from project_utils import sha256

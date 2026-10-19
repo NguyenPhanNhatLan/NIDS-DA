@@ -113,8 +113,8 @@ python -m evaluation.proposal_development_summary \
   --config configs/proposal_class_aware_mkmmd_sep010.json
 ```
 
-Các ablation, lệnh chạy đủ seeds và diagnostics:
-[class-aware development](docs/class_aware_development.md).
+Các ablation và cấu hình development bổ sung nằm trong `configs/`;
+outputs được lưu riêng theo tên config.
 Các cấu hình thử nghiệm không được coi là tối ưu khi chưa đánh giá.
 
 ## Cấu trúc source
@@ -127,9 +127,8 @@ Các cấu hình thử nghiệm không được coi là tối ưu khi chưa đá
 | `src/models/` | MLP và preprocessing classes dùng trong artifacts. |
 | `src/training/` | Trainers, losses, batch streaming và kiểm tra revision. |
 | `src/evaluation/` | Diagnostics, aggregate, development lock, final-test và CSV exporters. |
-| `src/analytics/` | Tạo bảng phân tích và BI. |
+| `src/analytics/` | Tổng hợp thống kê dữ liệu cho luận văn. |
 | `src/project_utils/` | SHA-256, ánh xạ source/target, chọn thiết bị và thống kê qua seeds. |
-| `tests/` | Kiểm tra loss, gradients, config và helpers. |
 
 Tools EDA, PCAP extraction, classical baselines và BI có entry point riêng;
 chúng không thuộc ma trận canonical. Tên module và preprocessing classes được
@@ -144,12 +143,12 @@ results/development/            # Báo cáo development bổ sung
 ```
 
 Dữ liệu, model binaries, `.env` và outputs sinh ra được loại khỏi Git bằng
-`.gitignore`. Chỉ source, configs, tests, notebooks và tài liệu được đưa lên repo.
+`.gitignore`. Chỉ source, configs, notebooks và tài liệu cần thiết được đưa lên repo.
 
 ## Kiểm tra
 
 ```bash
-python -m unittest discover -s tests -v
+python -m experiments.proposal_pipeline --stage verify
 python -m compileall -q src
 ```
 
@@ -158,17 +157,42 @@ sample std và CI Student-t; ΔAP dùng paired seeds. Std của MMD subsamples h
 AUC folds không phải CI 95%. Các diagnostics dùng target labels phải được báo
 là phân tích sau huấn luyện.
 
-Chi tiết: [data contract](docs/canonical_data_revision.md),
-[manifest](docs/experiment_manifest.md),
-[semantic review](docs/semantic_feature_review_20261009.md),
-[analytics](docs/analytics_pipeline.md),
-[class-aware results](docs/class_aware_ablation_results_20261017.md).
+Từ điển đặc trưng nằm trong `configs/data_dictionary/`; CSV candidate/mapping
+nằm trong `results/feature_mapping/`. `docs/` chỉ giữ
+[semantic review](docs/semantic_feature_review_20261009.md), là artifact đã
+được data manifest khóa theo đường dẫn và SHA-256.
 
-Bảng tổng hợp MMD canonical và development qua 5 seeds:
-[kết quả MMD](docs/mmd_results_20261017.md).
+## Vẽ biểu đồ
+
+Một script duy nhất ở root, đọc diagnostic JSON đã lưu và kiểm tra development lock:
+
+```bash
+.venv/bin/python plot_results.py --seed 42
+```
+
+Xuất đường Precision–Recall và phân vị điểm Attack cho hai hướng vào
+`results/analysis/figures/seed42_<timestamp>/`, gồm PNG 300 dpi, PDF và metadata.
+Dùng `--seed 43` đến `46` cho các run khác; `--output <thư-mục-mới>` để chọn nơi lưu.
+Hình dùng target-validation của một seed, không phải trung bình năm seeds.
+Không cần train hoặc inference lại. Biểu đồ phân vị sử dụng năm phân vị đã lưu,
+không phải ECDF đầy đủ.
+
+## Config nào cần giữ
+
+Sáu file thuộc canonical: `common_features_v2.json`, `proposal_suite_v2.json`,
+`proposal_data_policy.json`, `proposal_mmd_v2.json`, `proposal_mkmmd_v2.json`,
+`proposal_class_aware_v2.json`. Chúng được manifest hoặc development lock ràng buộc.
+Tám config còn lại gắn với checkpoint/result development đã lưu; giữ tên và nội dung
+để replay và kiểm tra provenance. `configs/data_dictionary/` là đầu vào mapping/EDA.
 
 ## Thành phần dùng chung
 
+- `training.common`: seed, cross-entropy cân bằng lớp, giữ BatchNorm statistics
+  và đo gradient norm; source-only và adaptation dùng chung.
+- `models.baseline.BaselineMLP`: cùng kiến trúc MLP cho source-only và adaptation.
+- `training.proposal_data.ParquetBatchStream`: đọc batch Parquet cho train/evaluate.
+- `evaluation.baseline`: thu điểm, chọn threshold và tính metric dùng chung.
+- `evaluation.proposal_results`: đọc và kiểm tra kết quả cho bảng CSV và script vẽ.
 - `training.adaptation.kernel_mmd_loss`: một bộ tính RBF MMD cho cả single-kernel
   và multi-kernel; các hàm public cũ giữ vai trò wrapper để tương thích.
 - `training.proposal_class_aware.prepare_class_batch`: tạo pseudo-label, mask và
@@ -177,4 +201,4 @@ Bảng tổng hợp MMD canonical và development qua 5 seeds:
   dùng chung cho aggregate, development summary và diagnostics.
 
 Các biến thể tiếp tục dùng chung MLP, trainer, Parquet loader và config validation.
-Refactor này không thay đổi configs, lựa chọn checkpoint hay kết quả đã lưu.
+Refactor giữ nguyên nội dung các config có kết quả, cách chọn checkpoint và artifacts đã lưu.

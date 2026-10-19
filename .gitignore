@@ -63,7 +63,6 @@ Thumbs.db
 /legacy/models/
 /legacy/results/
 
-# Rebuildable BI snapshots
-/analytics/
+# Local database files
 *.duckdb
 *.duckdb.wal

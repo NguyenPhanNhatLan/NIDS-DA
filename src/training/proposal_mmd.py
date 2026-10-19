@@ -6,7 +6,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import torch
-from torch import nn
 import torch.optim as optim
 
 from evaluation.baseline import (
@@ -18,7 +17,12 @@ from evaluation.baseline import (
 from features.common_features import COMMON_FEATURES
 from models.baseline import BaselineMLP
 from training.adaptation import mmd_loss
-from training.baseline import set_seed
+from training.common import (
+    balanced_cross_entropy,
+    freeze_bn_stats,
+    set_seed,
+    weighted_gradient_norm,
+)
 from training.proposal_class_aware import (
     audit_pseudo_labels,
     class_aware_mmd_loss,
@@ -137,22 +141,13 @@ def load_config(path):
     return config
 
 
-def freeze_bn_stats(model):
-    for module in model.modules():
-        if isinstance(module, nn.modules.batchnorm._BatchNorm):
-            module.eval()
-
-
 def count_classes(
     path,
     input_dim,
 ):
     loader = ParquetBatchStream(path, 4096, False, 0, True)
 
-    counts = torch.zeros(
-        2,
-        dtype=torch.long,
-    )
+    counts = torch.zeros(2, dtype=torch.long)
 
     for _, labels in loader:
         counts += torch.bincount(
@@ -164,15 +159,6 @@ def count_classes(
         raise ValueError(f"Both classes required: " f"{counts.tolist()}")
 
     return counts.tolist()
-
-
-def weighted_gradient_norm(term, parameters):
-    """Global parameter-gradient L2 norm of one weighted loss, without accumulating grads."""
-    if not term.requires_grad:
-        return 0.0
-    gradients = torch.autograd.grad(term, parameters, retain_graph=True, allow_unused=True)
-    norms = [gradient.detach().norm() for gradient in gradients if gradient is not None]
-    return float(torch.stack(norms).norm()) if norms else 0.0
 
 
 def train_mmd(
@@ -197,14 +183,7 @@ def train_mmd(
     gradient_every = config.get("diagnostics", {}).get("gradient_every_steps", 0)
     gradient_parameters = tuple(p for p in model.parameters() if p.requires_grad)
 
-    counts = torch.as_tensor(
-        counts,
-        dtype=torch.float32,
-    )
-
-    class_weights = (counts.sum() / (2.0 * counts)).to(device)
-
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = balanced_cross_entropy(counts, device)
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -263,7 +242,7 @@ def train_mmd(
         gradient_totals = {"source_ce": 0.0, "class_mmd": 0.0, "class_separation": 0.0}
         gradient_samples = 0
         separation_active_batches = 0
-        per_class_aligned_batches = [0,0]
+        per_class_aligned_batches = [0, 0]
         separation_evaluated_batches = 0
         steps = 0
 
@@ -284,23 +263,14 @@ def train_mmd(
 
             if source_x.shape[0] != target_x.shape[0]:
                 raise ValueError(
-                    "Source and target " "batch sizes differ. " "Use drop_last=True."
+                    "Source and target batch sizes differ. Use drop_last=True."
                 )
 
             batch_size = len(source_x)
 
-            combined_x = torch.cat(
-                [
-                    source_x,
-                    target_x,
-                ],
-                dim=0,
-            )
+            combined_x = torch.cat([source_x, target_x], dim=0)
 
-            (
-                combined_z,
-                combined_logits,
-            ) = model(combined_x)
+            combined_z, combined_logits = model(combined_x)
 
             source_z = combined_z[:batch_size]
 
@@ -313,9 +283,9 @@ def train_mmd(
             if method == "class_aware_mmd":
                 class_batch = prepare_class_batch(source_y, target_logits, confidence)
                 stats = class_aware_batch_stats(source_y, target_logits, confidence, batch=class_batch)
-                separation_evaluated_batches += int(len(stats['eligible_classes'])==2)
+                separation_evaluated_batches += int(len(stats['eligible_classes']) == 2)
                 for label in stats['active_classes']:
-                    per_class_aligned_batches[label] += int(lambda_mmd>0)
+                    per_class_aligned_batches[label] += int(lambda_mmd > 0)
                 per_class = stats["accepted_per_class"]
                 accepted, seen = sum(per_class), sum(stats["predicted_per_class"])
                 accepted_total += accepted
@@ -340,10 +310,7 @@ def train_mmd(
                     lambda_mmd > 0 and bool(stats["active_classes"])
                 )
 
-            ce_loss = criterion(
-                source_logits,
-                source_y,
-            )
+            ce_loss = criterion(source_logits, source_y)
 
             if lambda_mmd == 0:
                 alignment_loss = source_z.new_zeros(())
@@ -377,7 +344,7 @@ def train_mmd(
                     + separation_weight * separation_loss)
 
             if not torch.isfinite(loss):
-                raise ValueError("Non-finite MMD " "training loss")
+                raise ValueError("Non-finite MMD training loss")
 
             if gradient_every and steps % gradient_every == 0:
                 for name, term in (
@@ -408,11 +375,7 @@ def train_mmd(
         if steps == 0:
             raise RuntimeError("No MMD training batches")
 
-        val_ap = evaluate_ap(
-            model,
-            source_val_loader,
-            device,
-        )
+        val_ap = evaluate_ap(model, source_val_loader, device)
 
         row = {
             "epoch": epoch,
@@ -450,7 +413,7 @@ def train_mmd(
             }
             row["class_aware_alignment"] = {
                 "missing_class_policy": config["mmd"]["missing_class_policy"],
-                "active_classes": [c for c,n in enumerate(per_class_aligned_batches) if n],
+                "active_classes": [c for c, n in enumerate(per_class_aligned_batches) if n],
                 "eligible_batch_counts": eligibility_batches,
                 "both_classes_eligible_batches": both_classes_eligible_batches,
                 "aligned_batches": aligned_batches,
@@ -518,12 +481,7 @@ def train_mmd(
 
     model.eval()
 
-    return (
-        model,
-        best_epoch,
-        float(best_ap),
-        history,
-    )
+    return (model, best_epoch, float(best_ap), history)
 
 
 def evaluate_split(
@@ -534,16 +492,9 @@ def evaluate_split(
 ):
     loader = ParquetBatchStream(path, 1024, False, 0, True)
 
-    labels, scores = collect_scores(
-        model,
-        loader,
-    )
+    labels, scores = collect_scores(model, loader)
 
-    return compute_metrics(
-        labels,
-        scores,
-        threshold,
-    )
+    return compute_metrics(labels, scores, threshold)
 
 
 def run(
@@ -652,10 +603,7 @@ def run(
     if config.get("class_separation"):
         print(f"Class separation: {config['class_separation']}")
 
-    counts = count_classes(
-        source_train_path,
-        input_dim,
-    )
+    counts = count_classes(source_train_path, input_dim)
 
     source_loader = ParquetBatchStream(
         source_train_path,
@@ -704,36 +652,14 @@ def run(
 
     threshold_loader = ParquetBatchStream(source_val_path, 1024, False, seed, True)
 
-    val_labels, val_scores = collect_scores(
-        model,
-        threshold_loader,
-    )
+    val_labels, val_scores = collect_scores(model, threshold_loader)
 
-    threshold = select_f1_threshold(
-        val_labels,
-        val_scores,
-    )
-    within_metrics = evaluate_split(
-        model,
-        source_val_path,
-        input_dim,
-        threshold,
-    )
+    threshold = select_f1_threshold(val_labels, val_scores)
+    within_metrics = evaluate_split(model, source_val_path, input_dim, threshold)
 
-    cross_metrics = evaluate_split(
-        model,
-        target_development_path,
-        input_dim,
-        threshold,
-    )
+    cross_metrics = evaluate_split(model, target_development_path, input_dim, threshold)
 
-    metric_names = [
-        "pr_auc",
-        "roc_auc",
-        "macro_f1",
-        "recall",
-        "fpr",
-    ]
+    metric_names = ['pr_auc', 'roc_auc', 'macro_f1', 'recall', 'fpr']
 
     baseline_cross = source_only["target_development"]
 
@@ -744,10 +670,7 @@ def run(
 
     model_dir = checkpoint_path.parent
 
-    model_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     torch.save(
         {
@@ -844,21 +767,13 @@ def run(
 
     output_dir = output_path.parent
 
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     with output_path.open(
         "x",
         encoding="utf-8",
     ) as stream:
-        json.dump(
-            result,
-            stream,
-            indent=2,
-            allow_nan=False,
-        )
+        json.dump(result, stream, indent=2, allow_nan=False)
 
         stream.write("\n")
 
@@ -891,25 +806,13 @@ def main():
         ],
     )
 
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-    )
+    parser.add_argument('--seed', type=int, default=42)
 
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=DEFAULT_CONFIG,
-    )
+    parser.add_argument('--config', type=Path, default=DEFAULT_CONFIG)
 
     args = parser.parse_args()
 
-    run(
-        args.direction,
-        seed=args.seed,
-        config_path=args.config,
-    )
+    run(args.direction, seed=args.seed, config_path=args.config)
 
 
 if __name__ == "__main__":

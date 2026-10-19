@@ -1,5 +1,3 @@
-"""Fit source-only median/log/IQR in Spark; write distributed five-float arrays."""
-
 import math
 from pyspark.sql import functions as F
 from bigdata.clean import finite

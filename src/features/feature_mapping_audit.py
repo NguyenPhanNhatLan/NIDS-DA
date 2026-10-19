@@ -4,13 +4,13 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 
-UNSW_DICTIONARY = ROOT / "docs" / "data_dictionary" / "feature_dictionary_unsw.csv"
+UNSW_DICTIONARY = ROOT / "configs" / "data_dictionary" / "feature_dictionary_unsw.csv"
 
-CICIDS_DICTIONARY = ROOT / "docs" / "data_dictionary" / "feature_dictionary_cicids.csv"
+CICIDS_DICTIONARY = ROOT / "configs" / "data_dictionary" / "feature_dictionary_cicids.csv"
 
-CANDIDATES = ROOT / "docs" / "feature_candidates_v2.csv"
+CANDIDATES = ROOT / "results" / "feature_mapping" / "feature_candidates_v2.csv"
 
-OUTPUT = ROOT / "docs" / "feature_mapping_audit.csv"
+OUTPUT = ROOT / "results" / "feature_mapping" / "feature_mapping_audit.csv"
 
 
 def decide_mapping(row):
