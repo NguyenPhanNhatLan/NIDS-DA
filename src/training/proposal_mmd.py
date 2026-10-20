@@ -5,6 +5,8 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import torch
 import torch.optim as optim
 
@@ -70,7 +72,7 @@ def output_paths(direction, seed, config_path):
     model_root, result_root = MODEL_ROOT / tag, RESULT_ROOT / tag
     return (
         model_root / direction / f"seed{seed}.pt",
-        result_root / direction / f"seed{seed}.json",
+        result_file(result_root / direction / f"seed{seed}.json"),
     )
 
 
@@ -159,6 +161,21 @@ def count_classes(
         raise ValueError(f"Both classes required: " f"{counts.tolist()}")
 
     return counts.tolist()
+
+
+def compute_alignment_loss(source_z, source_labels, target_z, target_logits, config, *, batch=None):
+    """Use exactly the alignment objective configured for this training run."""
+    if float(config["lambda_mmd"]) == 0:
+        return source_z.new_zeros(()), source_z.new_zeros(())
+    method = config.get("method", "marginal_mmd")
+    if method == "mk_mmd":
+        return multi_kernel_mmd_loss(source_z, target_z, config["mmd"]["scales"])
+    if method == "class_aware_mmd":
+        return class_aware_mmd_loss(
+            source_z, source_labels, target_z, target_logits,
+            confidence_setting(config), scales=config["mmd"].get("scales"), batch=batch,
+        )
+    return mmd_loss(source_z, target_z)
 
 
 def train_mmd(
@@ -312,25 +329,9 @@ def train_mmd(
 
             ce_loss = criterion(source_logits, source_y)
 
-            if lambda_mmd == 0:
-                alignment_loss = source_z.new_zeros(())
-                bandwidth = source_z.new_zeros(())
-            elif method == "mk_mmd":
-                alignment_loss, bandwidth = multi_kernel_mmd_loss(
-                    source_z, target_z, config["mmd"]["scales"]
-                )
-            elif method == "class_aware_mmd":
-                alignment_loss, bandwidth = class_aware_mmd_loss(
-                    source_z,
-                    source_y,
-                    target_z,
-                    target_logits,
-                    confidence,
-                    scales=config["mmd"].get("scales"),
-                    batch=class_batch,
-                )
-            else:
-                alignment_loss, bandwidth = mmd_loss(source_z, target_z)
+            alignment_loss, bandwidth = compute_alignment_loss(
+                source_z, source_y, target_z, target_logits, config, batch=class_batch,
+            )
 
             separation_loss = source_z.new_zeros(())
             if separation_weight > 0:

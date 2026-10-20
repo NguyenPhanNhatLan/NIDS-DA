@@ -130,7 +130,7 @@ Các cấu hình thử nghiệm không được coi là tối ưu khi chưa đá
 | `src/analytics/` | Tổng hợp thống kê dữ liệu cho luận văn. |
 | `src/project_utils/` | SHA-256, ánh xạ source/target, chọn thiết bị và thống kê qua seeds. |
 
-Tools EDA, PCAP extraction, classical baselines và BI có entry point riêng;
+Tools EDA, PCAP extraction và classical baselines có entry point riêng;
 chúng không thuộc ma trận canonical. Tên module và preprocessing classes được
 giữ để tương thích checkpoints/joblib hiện có.
 
@@ -138,8 +138,11 @@ giữ để tương thích checkpoints/joblib hiện có.
 results/data_audit/canonical/    # Audits trước freeze
 data/revisions/canonical/       # Common/prepared data và manifest
 models/canonical/               # Preprocessors và checkpoints
-results/canonical/              # Runs, diagnostics và aggregate
-results/development/            # Báo cáo development bổ sung
+results/canonical/              # Kết quả gốc và lock, giữ nguyên đường dẫn
+results/json/                   # JSON kết quả và audit
+results/images/                 # PNG
+results/tables/                 # CSV và bảng Markdown
+results/arrays/                 # Mẫu NPZ
 ```
 
 Dữ liệu, model binaries, `.env` và outputs sinh ra được loại khỏi Git bằng
@@ -158,9 +161,29 @@ AUC folds không phải CI 95%. Các diagnostics dùng target labels phải đư
 là phân tích sau huấn luyện.
 
 Từ điển đặc trưng nằm trong `configs/data_dictionary/`; CSV candidate/mapping
-nằm trong `results/feature_mapping/`. `docs/` chỉ giữ
+nằm trong `results/tables/feature_mapping__*.csv`. `docs/` chỉ giữ
 [semantic review](docs/semantic_feature_review_20261009.md), là artifact đã
 được data manifest khóa theo đường dẫn và SHA-256.
+
+## Tìm kết quả ở đâu
+
+- `results/images/`: tất cả hình PNG; hiện có hai hình seed 42 và ba hình cơ chế.
+- `results/json/`: kết quả và metadata chưa bị khóa, gom chung theo tên bộ chạy.
+- `results/tables/`: CSV và bảng Markdown. File `mechanisms__table*.csv` là bảng
+  chính; `mechanisms__appendix*.csv` là số liệu kiểm tra, không bắt buộc đưa vào bài.
+- `results/arrays/`: bảy file NPZ phục vụ kiểm tra và lấy mẫu lại.
+
+Các file trong `results/canonical/` và `results/data_audit/canonical/` là 46
+artifact gốc được manifest/lock ràng buộc; giữ nguyên vị trí và nội dung.
+Tên file gom dùng `__` để phân cách bộ chạy, chiều chuyển miền và seed.
+Các bộ `development__*`, `canonical__extensions__*` và `canonical__funnel*`
+là thử nghiệm phụ, không thuộc bộ ba phương pháp canonical để báo cáo chính.
+Không cần đưa mọi output vào khóa luận. `src/` chỉ chứa mã nguồn.
+
+Các lệnh audit vẫn nhận `--output` làm tên bộ chạy. Khi nằm trong `results/`,
+file được gom theo loại sau khi audit hoàn tất; output ngoài `results/` được giữ
+nguyên. `project_utils.result_files` dùng chung quy tắc này và đọc được các đường
+kết quả cũ. Dữ liệu và chỉ số không được tính lại khi đổi cách lưu.
 
 ## Vẽ biểu đồ
 
@@ -171,11 +194,39 @@ Một script duy nhất ở root, đọc diagnostic JSON đã lưu và kiểm tr
 ```
 
 Xuất đường Precision–Recall và phân vị điểm Attack cho hai hướng vào
-`results/analysis/figures/seed42_<timestamp>/`, gồm PNG 300 dpi, PDF và metadata.
-Dùng `--seed 43` đến `46` cho các run khác; `--output <thư-mục-mới>` để chọn nơi lưu.
+`results/images/`, với tên `seed42__target_precision_recall.png` và
+`seed42__target_attack_score_quantiles.png` (300 dpi). Chạy lại sẽ cập nhật hai ảnh.
+Dùng `--seed 43` đến `46` cho các run khác; `--output <thư-mục>` để chọn nơi lưu.
 Hình dùng target-validation của một seed, không phải trung bình năm seeds.
 Không cần train hoặc inference lại. Biểu đồ phân vị sử dụng năm phân vị đã lưu,
 không phải ECDF đầy đủ.
+
+### Figure và bảng cho mục 4.5
+
+Ba figure nằm trong `results/images/mechanisms__*.png`; bảng và phụ lục nằm
+trong `results/tables/mechanisms__*.csv`. Đọc `results/tables/mechanisms__tables.md`
+để xem các bảng chính. Thông tin phép đo nằm trong
+`results/json/mechanisms__audit_manifest.json`.
+Vẽ lại figure từ số liệu này, không vẽ lại hai hình mục 4.4:
+
+```bash
+.venv/bin/python plot_results.py --section mechanisms
+```
+
+Khi cần đo lại, chọn một tên bộ kết quả mới:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m evaluation.proposal_mechanism_audit \
+  --output results/mechanisms_run2
+.venv/bin/python plot_results.py --section mechanisms \
+  --audit-dir results/mechanisms_run2
+```
+
+Audit này dùng đúng ba cấu hình canonical và năm seeds 42–46; không đọc target test,
+không cập nhật trọng số. Gradient lấy đúng alignment loss của từng phương pháp.
+Batch có gradient bằng không hoặc không đủ hai lớp pseudo-label được ghi riêng;
+cosine không xác định không được gán thành 0. BN shift là chẩn đoán, chưa có ablation
+để kết luận tác động lên AP. Chi tiết mẫu và cách tổng hợp nằm trong `audit_manifest.json`.
 
 ## Config nào cần giữ
 

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -7,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 UNSW_PATH = ROOT / "configs" / "data_dictionary" / "feature_dictionary_unsw.csv"
 CICIDS_PATH = ROOT / "configs" / "data_dictionary" / "feature_dictionary_cicids.csv"
 
-OUTPUT_PATH = ROOT / "results" / "feature_mapping" / "feature_candidates_v2.csv"
+OUTPUT_PATH = result_file(ROOT / "results" / "feature_mapping" / "feature_candidates_v2.csv")
 
 
 TIME_UNITS = {

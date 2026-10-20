@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 from project_utils.statistics import seed_statistics
 from experiments.proposal_protocol import DIRECTIONS, SEEDS
 from training.data_revision import verify_revision
@@ -49,6 +51,8 @@ def main():
     parser.add_argument('--seeds', type=int, nargs='+', default=list(SEEDS))
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
+    if args.output:
+        args.output = result_file(args.output)
     result = summarize(args.config, args.direction, args.seeds)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

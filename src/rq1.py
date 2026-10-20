@@ -5,6 +5,8 @@ import csv
 import json
 import math
 from pathlib import Path
+
+from project_utils.result_files import publish_results
 from statistics import mean, stdev
 from project_utils import sha256
 
@@ -367,6 +369,7 @@ def main() -> None:
         json.dumps(checks, indent=2) + "\n", encoding="utf-8"
     )
     (out / "rq1_report.md").write_text(to_markdown(checks, summary), encoding="utf-8")
+    publish_results(out)
     print("\nRQ1 summary:")
     for r in summary:
         print(

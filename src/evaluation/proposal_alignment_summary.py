@@ -7,6 +7,8 @@ import json
 import math
 from pathlib import Path
 
+from project_utils.result_files import publish_results, result_file
+
 from project_utils import sha256
 from experiments.proposal_protocol import ROOT
 from evaluation.proposal_results import load_alignment_runs as collect_runs
@@ -46,7 +48,7 @@ def summarize_runs(runs, tolerance=1e-12):
 def export(diagnostics_root, output, tolerance=1e-12):
     if not math.isfinite(tolerance) or tolerance < 0:
         raise ValueError("Tolerance must be finite and nonnegative")
-    if output.exists():
+    if output.exists() or result_file(output / "export_manifest.json").exists():
         raise FileExistsError(f"Choose a new export directory: {output}")
     runs, revision, input_paths = collect_runs(diagnostics_root)
     summary = summarize_runs(runs, tolerance)
@@ -113,6 +115,7 @@ def main():
     parser.add_argument("--tolerance", type=float, default=1e-12)
     args = parser.parse_args()
     export(args.diagnostics_root, args.output, args.tolerance)
+    publish_results(args.output)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+from project_utils.result_files import publish_results, result_file
+
 import numpy as np
 import pyarrow.parquet as pq
 from sklearn.neighbors import NearestNeighbors
@@ -75,6 +77,8 @@ def main():
         parser.error('Require 1 <= k < sampled flows per domain')
     if not set(args.umap_seeds) <= set(args.seeds):
         parser.error('umap-seeds must be included in seeds')
+    if result_file(args.output / "manifest.json").exists():
+        raise FileExistsError("kNN outputs already exist; choose another --output name")
     args.output.mkdir(parents=True, exist_ok=False)
     directions = ['unsw_to_cicids', 'cicids_to_unsw'] if args.direction == 'both' else [args.direction]
     rows, points, embeddings, provenance = [], [], [], []
@@ -165,7 +169,8 @@ def main():
                     interpretation='Agreement is mean fraction of reference neighbors sharing query class; mixing=1-agreement. Macro uses balanced classes. Chance label agreement is 0.5 for balanced references.',
                     limitations='Duplicate feature vectors are retained; self row excluded within domain, other duplicates remain. Tied neighbors use sklearn ordering. Seed CI covers model run variation conditional on fixed sample, not dataset uncertainty. Independent UMAP coordinates are not comparable across panels. Raw latent vectors are not rescaled.')
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    print(f'Saved: {args.output}', flush=True)
+    publish_results(args.output)
+    print('Saved kNN outputs by file type under results/.', flush=True)
 
 
 if __name__ == '__main__':

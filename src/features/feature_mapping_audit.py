@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,9 +10,9 @@ UNSW_DICTIONARY = ROOT / "configs" / "data_dictionary" / "feature_dictionary_uns
 
 CICIDS_DICTIONARY = ROOT / "configs" / "data_dictionary" / "feature_dictionary_cicids.csv"
 
-CANDIDATES = ROOT / "results" / "feature_mapping" / "feature_candidates_v2.csv"
+CANDIDATES = result_file(ROOT / "results" / "feature_mapping" / "feature_candidates_v2.csv")
 
-OUTPUT = ROOT / "results" / "feature_mapping" / "feature_mapping_audit.csv"
+OUTPUT = result_file(ROOT / "results" / "feature_mapping" / "feature_mapping_audit.csv")
 
 
 def decide_mapping(row):

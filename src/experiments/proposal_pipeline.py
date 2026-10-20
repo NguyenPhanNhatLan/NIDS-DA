@@ -1,5 +1,6 @@
 """Run the canonical data, development and final-test stages."""
 
+from project_utils.result_files import result_file
 import argparse
 import json
 import os
@@ -99,8 +100,8 @@ def diagnostics():
 
     for seed in SEEDS:
         intrinsic_dir = result_root / "domain_shift" / "intrinsic" / f"seed{seed}"
-        if (intrinsic_dir / "result.json").is_file() and (
-            intrinsic_dir / "samples.npz"
+        if result_file(intrinsic_dir / "result.json").is_file() and (
+            result_file(intrinsic_dir / "samples.npz")
         ).is_file():
             print(f"Reuse intrinsic diagnostics: seed{seed}", flush=True)
         else:
@@ -111,7 +112,7 @@ def diagnostics():
             )
 
         for direction in DIRECTIONS:
-            output = result_root / "domain_shift" / f"{direction}_seed{seed}.json"
+            output = result_file(result_root / "domain_shift" / f"{direction}_seed{seed}.json")
             if output.is_file():
                 print(
                     f"Reuse directional diagnostics: {direction}/seed{seed}", flush=True

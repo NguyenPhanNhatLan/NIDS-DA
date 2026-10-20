@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import numpy as np
 import pyarrow.parquet as pq
 import torch
@@ -487,7 +489,7 @@ def run(
         if config_path.resolve() == default_config.resolve()
         else f"seed{seed}_{config_path.stem}.json"
     )
-    output = OUTPUT_ROOT / direction / filename
+    output = result_file(OUTPUT_ROOT / direction / filename)
     source_model, adapted_model, source_result, adapted_result, paths = load_models(
         direction, seed, config_path
     )

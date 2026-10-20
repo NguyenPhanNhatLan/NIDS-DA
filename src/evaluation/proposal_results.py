@@ -8,6 +8,8 @@ import math
 import os
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 from evaluation.proposal_development_lock import require_development_lock
 from experiments.proposal_protocol import DIRECTIONS, METHOD_CONFIGS, ROOT, SEEDS
 from project_utils import sha256
@@ -27,6 +29,16 @@ RUN_COLUMNS = (
     "selected_stage",
     "best_epoch",
 )
+
+
+def diagnostic_files(folder):
+    paths = []
+    for direction in DIRECTIONS:
+        for method, config in METHOD_CONFIGS.items():
+            for seed in SEEDS:
+                name = f"seed{seed}.json" if method == "marginal_mmd" else f"seed{seed}_{config.stem}.json"
+                paths.append(result_file(Path(folder) / direction / name))
+    return paths
 
 
 def _check_equal(actual, expected, context):
@@ -59,7 +71,7 @@ def load_alignment_runs(diagnostics_root):
     }
     runs = {}
     input_paths = set()
-    for path in sorted(diagnostics_root.glob("*/*.json")):
+    for path in diagnostic_files(diagnostics_root):
         report = json.loads(path.read_text())
         config_name = Path(report["config"]).stem
         if config_name not in config_methods:
@@ -173,8 +185,8 @@ def load_score_reports(diagnostics_root, seed):
     selections = {(row["direction"], row["method"]): row for row in runs if row["seed"] == seed}
     reports, sources = {}, []
     methods_by_config = {path.stem: method for method, path in METHOD_CONFIGS.items()}
-    for path in sorted(diagnostics_root.glob("*/*.json")):
-        if not path.name.startswith(f"seed{seed}.") and not path.name.startswith(f"seed{seed}_"):
+    for path in diagnostic_files(diagnostics_root):
+        if f"seed{seed}." not in path.name and f"seed{seed}_" not in path.name:
             continue
         report = json.loads(path.read_text())
         key = (report["direction"], methods_by_config[Path(report["config"]).stem])
@@ -192,6 +204,15 @@ def load_score_reports(diagnostics_root, seed):
             before = reports[direction, method]["target_validation_score_analysis"]["before"]
             if before != baseline:
                 raise ValueError(f"Source-only diagnostics differ between methods: {direction}")
+            report = reports[direction, method]
+            adapted = json.loads(Path(report["artifacts"]["adapted_result"]).read_text())
+            threshold = report["target_validation_score_analysis"]["after"]["source_threshold_metrics"]["threshold"]
+            if (
+                not math.isfinite(threshold)
+                or not 0 <= threshold <= 1
+                or not math.isclose(threshold, adapted["threshold"], rel_tol=0, abs_tol=1e-12)
+            ):
+                raise ValueError(f"After decision threshold differs from locked result: {direction}/{method}")
             for phase, expected_ap in (("before", "ap_before"), ("after", "ap_after")):
                 observed = reports[direction, method]["target_validation_score_analysis"][phase]
                 if not math.isclose(observed["average_precision"], selections[direction, method][expected_ap], rel_tol=0, abs_tol=1e-3):

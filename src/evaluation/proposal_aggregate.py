@@ -2,6 +2,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import numpy as np
 from project_utils.statistics import seed_statistics
 
@@ -37,7 +39,7 @@ def diagnostic_path(method, direction, seed):
         if method == "marginal_mmd"
         else f"seed{seed}_{CONFIGS[method].stem}.json"
     )
-    return RESULT_ROOT / "diagnostics_target_val" / direction / name
+    return result_file(RESULT_ROOT / "diagnostics_target_val" / direction / name)
 
 
 def aggregate(

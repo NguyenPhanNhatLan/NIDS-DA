@@ -1,8 +1,5 @@
 import argparse
-import csv
-import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Allow running this file directly from a source checkout.
@@ -16,17 +13,9 @@ from matplotlib.lines import Line2D
 import numpy as np
 
 from evaluation.proposal_results import load_score_reports
+from evaluation.plot_style import DIRECTION_LABELS, METHOD_LABELS
 from experiments.proposal_protocol import DIRECTIONS, METHOD_CONFIGS, ROOT, SEEDS
 
-DIRECTION_LABELS = {
-    "unsw_to_cicids": "UNSW → CICIDS",
-    "cicids_to_unsw": "CICIDS → UNSW",
-}
-METHOD_LABELS = {
-    "marginal_mmd": "Marginal MMD",
-    "mk_mmd": "MK-MMD",
-    "class_aware_mmd": "Class-Aware MMD",
-}
 METHOD_STYLES = {
     "source_only": ("#252525", "--"),
     "marginal_mmd": ("#0072B2", "-"),
@@ -61,8 +50,7 @@ def style_axes(axis):
 
 
 def save_figure(figure, output, name):
-    for extension in ("png", "pdf"):
-        figure.savefig(output / f"{name}.{extension}", dpi=300, facecolor="white")
+    figure.savefig(output / f"{name}.png", dpi=300, facecolor="white")
     plt.close(figure)
 
 
@@ -73,39 +61,38 @@ def plot_precision_recall(reports, selections, seed, output):
             "target_validation_score_analysis"
         ]["before"]
         # Draw adaptation first so the dashed baseline remains visible on exact ties.
+        adaptation_lines = []
         for method in METHOD_CONFIGS:
             scores = reports[direction, method]["target_validation_score_analysis"][
                 "after"
             ]
             color, line = METHOD_STYLES[method]
-            epoch = selections[direction, method]["best_epoch"]
-            label = f"{METHOD_LABELS[method]}: AP={scores['average_precision']:.4f}, epoch={epoch}"
-            axis.step(
+            label = f"{METHOD_LABELS[method]} · AP = {scores['average_precision']:.4f}"
+            line_handle, = axis.step(
                 *pr_points(scores),
                 where="post",
                 color=color,
                 linestyle=line,
                 linewidth=1.6,
                 label=label,
-                rasterized=True,
             )
+            adaptation_lines.append(line_handle)
         color, line = METHOD_STYLES["source_only"]
-        axis.step(
+        baseline_line, = axis.step(
             *pr_points(baseline),
             where="post",
             color=color,
             linestyle=line,
             linewidth=1.8,
-            label=f"Source-only: AP={baseline['average_precision']:.4f}",
-            rasterized=True,
+            label=f"Source-only · AP = {baseline['average_precision']:.4f}",
         )
         prevalence = baseline["attack_prevalence"]
-        axis.axhline(
+        prevalence_line = axis.axhline(
             prevalence,
             color="#777777",
             linestyle=(0, (1, 3)),
             linewidth=1,
-            label=f"Attack prevalence={prevalence:.3f}",
+            label=f"Attack prevalence = {prevalence:.1%}",
         )
         style_axes(axis)
         axis.set(
@@ -114,7 +101,21 @@ def plot_precision_recall(reports, selections, seed, output):
             ylabel="Precision (Attack)",
             title=DIRECTION_LABELS[direction],
         )
-        axis.legend(loc="upper right", fontsize=8, framealpha=0.95)
+        axis.legend(
+            handles=[baseline_line, *adaptation_lines, prevalence_line],
+            loc="upper right", fontsize=8, framealpha=0.95,
+        )
+        if (
+            direction == "unsw_to_cicids"
+            and selections[direction, "marginal_mmd"]["selected_stage"] == "source_pretrained"
+        ):
+            axis.text(
+                0.98, 0.64,
+                "Marginal MMD retains the source-only model;\ncurves overlap.",
+                transform=axis.transAxes, ha="right", va="top", fontsize=8,
+                color="#444444",
+                bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "none"},
+            )
     figure.suptitle(
         f"Target-validation Precision–Recall curves · seed {seed}", fontsize=14
     )
@@ -122,19 +123,18 @@ def plot_precision_recall(reports, selections, seed, output):
         0.5,
         0.025,
         "One fixed seed; AP comes from the saved score diagnostic and may differ slightly from training-table AP.\n"
-        "Epoch 0 selects source-pretrained weights. No threshold is tuned here.",
+        "Adaptation curves use the checkpoint selected by source-validation AP. No threshold is tuned here.",
         ha="center",
         fontsize=9,
         color="#444444",
     )
     figure.tight_layout(rect=(0, 0.10, 1, 0.94))
-    save_figure(figure, output, "target_precision_recall")
+    save_figure(figure, output, f"seed{seed}__target_precision_recall")
 
 
 def plot_score_quantiles(reports, selections, seed, output):
     figure, axes = plt.subplots(2, 3, figsize=(13.6, 8.6), sharex=True, sharey=True)
     quantile_percent = np.array([5, 25, 50, 75, 95])
-    rows = []
     for direction_index, direction in enumerate(DIRECTIONS):
         for method_index, method in enumerate(METHOD_CONFIGS):
             axis = axes[direction_index, method_index]
@@ -161,29 +161,29 @@ def plot_score_quantiles(reports, selections, seed, output):
                         linewidth=1.6,
                         markerfacecolor="white" if phase == "before" else color,
                     )
-                    for quantile, value in zip(QUANTILES, values):
-                        rows.append(
-                            {
-                                "direction": direction,
-                                "method": method,
-                                "seed": seed,
-                                "true_label": (
-                                    "Normal" if label == "benign" else "Attack"
-                                ),
-                                "phase": phase,
-                                "quantile": quantile,
-                                "attack_score": float(value),
-                                "class_count": distribution["count"],
-                            }
-                        )
-            epoch = selections[direction, method]["best_epoch"]
-            selected = (
-                "source-pretrained" if epoch == 0 else f"adaptation, epoch {epoch}"
+            threshold = scores["after"]["source_threshold_metrics"]["threshold"]
+            axis.axhline(threshold, color="#777777", linestyle=":", linewidth=1.1)
+            axis.annotate(
+                f"Decision threshold = {threshold:.4f}",
+                xy=(0.97, threshold), xycoords=axis.get_yaxis_transform(),
+                xytext=(0, 5 if threshold < 0.15 else -5), textcoords="offset points",
+                ha="right", va="bottom" if threshold < 0.15 else "top",
+                fontsize=8, color="#666666",
+                bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "none", "pad": 1.5},
             )
             axis.set_title(
-                f"{DIRECTION_LABELS[direction]} · {METHOD_LABELS[method]}\nSelected: {selected}",
-                fontsize=10,
+                f"{DIRECTION_LABELS[direction]} · {METHOD_LABELS[method]}", fontsize=10,
             )
+            if (
+                direction == "unsw_to_cicids"
+                and method == "marginal_mmd"
+                and selections[direction, method]["selected_stage"] == "source_pretrained"
+            ):
+                axis.text(
+                    0.03, 0.80, "Source-only retained",
+                    transform=axis.transAxes, va="top", fontsize=8, color="#444444",
+                    bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "none"},
+                )
             counts = scores["before"]["score_distributions"]
             axis.text(
                 0.03,
@@ -209,7 +209,7 @@ def plot_score_quantiles(reports, selections, seed, output):
             marker="o" if label == "Normal" else "^",
             markersize=4,
             markerfacecolor="white" if phase == "before" else color,
-            label=f"{label} · {'Source-only' if phase == 'before' else 'Selected checkpoint'}",
+            label=f"{label} · {'Before' if phase == 'before' else 'After'}",
         )
         for label, color in (
             ("Normal", CLASS_COLORS["benign"]),
@@ -229,24 +229,21 @@ def plot_score_quantiles(reports, selections, seed, output):
     figure.text(
         0.5,
         0.025,
-        "Saved p05, p25, p50, p75 and p95; connecting segments are visual guides, not an ECDF.\n"
-        "Before/after percentiles are not paired flows. Overlapping quantiles alone do not establish a ranking change.",
+        "Before: source-only model. After: model selected by source-validation AP.\n"
+        "Dotted line: After decision threshold, selected by Attack-class F1 on source validation separately for each model.\n"
+        "Saved p05, p25, p50, p75 and p95; connecting segments are visual guides, not an ECDF.",
         ha="center",
         fontsize=9,
         color="#444444",
     )
     figure.tight_layout(rect=(0, 0.09, 1, 0.88), h_pad=2.2)
-    save_figure(figure, output, "target_attack_score_quantiles")
-    with (output / "attack_score_quantiles.csv").open(
-        "w", newline="", encoding="utf-8-sig"
-    ) as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+    save_figure(figure, output, f"seed{seed}__target_attack_score_quantiles")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--section", choices=["scores", "mechanisms"], default="scores")
+    parser.add_argument("--audit-dir", type=Path, default=ROOT / "results/analysis/section_4_5_canonical")
     parser.add_argument("--seed", type=int, choices=SEEDS, default=42)
     parser.add_argument(
         "--diagnostics-root",
@@ -256,41 +253,25 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        help="New figure directory; defaults to results/analysis/figures/seed<seed>_<timestamp>",
+        help="PNG output directory; defaults to results/images/",
     )
     args = parser.parse_args()
+    if args.section == "mechanisms":
+        from evaluation.proposal_mechanism_figures import plot_mechanisms
+        plot_mechanisms(args.audit_dir, args.output or ROOT / "results/images")
+        return
     if args.output is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output = ROOT / "results/analysis/figures" / f"seed{args.seed}_{timestamp}"
-    if args.output.exists():
-        raise FileExistsError(f"Choose a new output directory: {args.output}")
-    reports, selections, revision, sources, ap_checks = load_score_reports(
+        args.output = ROOT / "results/images"
+    reports, selections, *_ = load_score_reports(
         args.diagnostics_root, args.seed
     )
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update(
-        {"font.family": "DejaVu Sans", "font.size": 10, "pdf.fonttype": 42}
+        {"font.family": "DejaVu Sans", "font.size": 10}
     )
     plot_precision_recall(reports, selections, args.seed, args.output)
     plot_score_quantiles(reports, selections, args.seed, args.output)
-    (args.output / "figure_manifest.json").write_text(
-        json.dumps(
-            {
-                **revision,
-                "seed": args.seed,
-                "data_role": "target_validation",
-                "pr_curve_scope": "full target-validation; one seed; saved AP; sklearn terminal endpoint restored",
-                "score_distribution_scope": "five saved quantiles per true class; not full ECDF or paired-flow shifts",
-                "selection": list(selections.values()),
-                "sources": sources,
-                "diagnostic_vs_locked_ap": ap_checks,
-                "ap_comparison_absolute_tolerance": 1e-3,
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    print(f"Saved PNG, PDF, quantile CSV and provenance: {args.output}")
+    print(f"Saved 2 PNG files: {args.output}")
 
 
 if __name__ == "__main__":

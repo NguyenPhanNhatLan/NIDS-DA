@@ -5,6 +5,8 @@ import csv
 import json
 from pathlib import Path
 
+from project_utils.result_files import publish_results, result_file
+
 import numpy as np
 import torch
 
@@ -209,7 +211,7 @@ def main():
     parser.add_argument('--mmd-repeats',type=int,default=10)
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
-    if args.output.exists():
+    if args.output.exists() or result_file(args.output / "manifest.json").exists():
         parser.error('Output exists; choose a fresh directory')
     if (not args.seeds or len(set(args.seeds)) != len(args.seeds)
             or min(args.sample_rows,args.per_class,args.mmd_sample)<2
@@ -218,6 +220,7 @@ def main():
         parser.error('Invalid seeds, sample sizes, k, repeats or thresholds')
     torch.set_num_threads(4)
     run(args)
+    publish_results(args.output)
 
 
 if __name__ == '__main__':

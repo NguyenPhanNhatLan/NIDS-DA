@@ -28,7 +28,10 @@ htmlcov/
 # Dữ liệu và kết quả sinh ra
 /data/
 /results/*
-!/results/feature_mapping/
+!/results/tables/
+/results/tables/*
+!/results/tables/feature_mapping__feature_candidates_v2.csv
+!/results/tables/feature_mapping__feature_mapping_audit.csv
 /reports/
 /artifacts/
 

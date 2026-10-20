@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import torch
 
 from experiments.proposal_protocol import DIRECTIONS, SEEDS
@@ -74,6 +76,8 @@ def main():
     parser.add_argument('--device', choices=['cpu', 'mps', 'cuda'], default='cpu')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
+    if args.output:
+        args.output = result_file(args.output)
     if not args.thresholds or any(not 0 <= t <= 1 for t in args.thresholds):
         parser.error('thresholds must be in [0, 1]')
     if args.output.exists():

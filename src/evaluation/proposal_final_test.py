@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import numpy as np
 import torch
 from sklearn.metrics import average_precision_score
@@ -161,7 +163,7 @@ def run(direction, method, seed=42):
         }
         if (direction, method, seed) not in locked_runs:
             raise ValueError('Requested final-test run is not in locked development matrix')
-    output = OUTPUT_ROOT / method / direction / f'seed{seed}.json'
+    output = result_file(OUTPUT_ROOT / method / direction / f'seed{seed}.json')
     if output.exists():
         raise FileExistsError(f'Final-test result already exists: {output}')
     validated = validate_development(direction, method, seed)

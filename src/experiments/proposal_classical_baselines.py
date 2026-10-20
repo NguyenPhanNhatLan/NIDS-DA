@@ -2,6 +2,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import numpy as np
 import pyarrow.parquet as pq
 from sklearn.linear_model import LogisticRegression
@@ -123,7 +125,7 @@ def run(direction, method, seed=42, max_train_rows=250000):
     )
     if not preprocessor.is_file():
         raise FileNotFoundError(f"Missing source-fitted preprocessor: {preprocessor}")
-    output = RESULT_ROOT / method / direction / f"seed{seed}.json"
+    output = result_file(RESULT_ROOT / method / direction / f"seed{seed}.json")
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
 

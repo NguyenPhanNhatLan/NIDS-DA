@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from project_utils.result_files import result_file
+
 import numpy as np
 import pyarrow.parquet as pq
 import torch
@@ -436,12 +438,8 @@ def run(
 
 
 
-    RESULT_ROOT.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output = RESULT_ROOT / f"{direction}_seed{seed}.json"
+    output = result_file(RESULT_ROOT / f"{direction}_seed{seed}.json")
+    output.parent.mkdir(parents=True, exist_ok=True)
 
     if output.exists():
         raise FileExistsError(f"Result already exists: " f"{output}")
@@ -667,7 +665,7 @@ def run_intrinsic(
             "Intrinsic raw-root must match the selected frozen canonical common root"
         )
     output_dir = RESULT_ROOT / "intrinsic" / f"seed{seed}"
-    if output_dir.exists() and not overwrite:
+    if (output_dir.exists() or result_file(output_dir / "result.json").exists()) and not overwrite:
         raise FileExistsError(f"Result exists: {output_dir}. Use --overwrite to rerun.")
     raw, totals, artifacts, provenance = {}, {}, {}, {}
     for offset, domain in enumerate(("unsw", "cicids")):
@@ -749,12 +747,13 @@ def run_intrinsic(
         "same_domain_auc_controls": controls,
         "control_interpretation": "independent same-domain biased MMD need not equal zero; random-partition AUC should be near 0.5, without a hard pass threshold",
     }
-    output_dir.mkdir(parents=True, exist_ok=True)
-    samples_path = output_dir / "samples.npz"
+    samples_path = result_file(output_dir / "samples.npz")
+    samples_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(samples_path, **artifacts)
     result["sample_artifact"] = str(samples_path.resolve())
     result["sample_artifact_sha256"] = sha256(samples_path)
-    output = output_dir / "result.json"
+    output = result_file(output_dir / "result.json")
+    output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as stream:
         json.dump(result, stream, indent=2, allow_nan=False)
         stream.write("\n")
