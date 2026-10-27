@@ -164,7 +164,6 @@ def count_classes(
 
 
 def compute_alignment_loss(source_z, source_labels, target_z, target_logits, config, *, batch=None):
-    """Use exactly the alignment objective configured for this training run."""
     if float(config["lambda_mmd"]) == 0:
         return source_z.new_zeros(()), source_z.new_zeros(())
     method = config.get("method", "marginal_mmd")

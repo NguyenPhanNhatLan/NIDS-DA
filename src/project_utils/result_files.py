@@ -1,5 +1,3 @@
-"""Keep generated files together by type; frozen evidence keeps its original path."""
-
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -22,14 +20,13 @@ def frozen_results():
 
 
 def result_file(path):
-    """Resolve an old output filename to the flat layout, including new outputs."""
     path = Path(path).absolute()
     if path in frozen_results():
         return path
     try:
         relative = path.relative_to(RESULTS)
     except ValueError:
-        return path  # Explicit output outside results/ is left to the caller.
+        return path
     folder = FOLDERS.get(path.suffix)
     if folder is None or relative.parts[0] in FOLDERS.values():
         return path
@@ -44,7 +41,6 @@ def result_file(path):
 
 
 def publish_results(folder):
-    """Collect a completed audit bundle; explicit external folders stay unchanged."""
     folder = Path(folder).absolute()
     if not folder.is_relative_to(RESULTS) or not folder.is_dir():
         return

@@ -163,7 +163,6 @@ def _load_common_splits(common_root):
 
 
 def _move_collision_groups(connection, values, memberships, new_memberships):
-    """Move equal float32 vectors to their furthest existing holdout split."""
     table = pa.table(
         {
             **{n: values[:, i] for i, n in enumerate(COMMON_FEATURES)},
@@ -182,7 +181,7 @@ def _move_collision_groups(connection, values, memberships, new_memberships):
             collision_values = np.column_stack(
                 [collisions[n] for n in COMMON_FEATURES]
             ).astype(np.float32)
-            # Compare whole vectors by their bytes after normalizing signed zeros.
+
             key_type = np.dtype(f"V{values.shape[1] * values.dtype.itemsize}")
             row_keys = np.ascontiguousarray(values).view(key_type).ravel()
             collision_keys = (
@@ -213,7 +212,6 @@ def _fit_without_split_leakage(
     max_relocated_fraction,
     max_class_prevalence_change,
 ):
-    """Refit both source processors until no transformed vector crosses splits."""
     initial_memberships = {
         domain: membership.copy() for domain, membership in memberships.items()
     }
@@ -233,7 +231,7 @@ def _fit_without_split_leakage(
             processors[direction] = processor
             for domain in DOMAINS:
                 values = processor.transform(arrays[domain]).astype(np.float32)
-                values[values == 0] = 0  # Give -0.0 and +0.0 the same byte key.
+                values[values == 0] = 0
                 _move_collision_groups(
                     connection, values, memberships[domain], new_memberships[domain]
                 )
@@ -472,7 +470,6 @@ def freeze(
     max_relocated_fraction=0.01,
     max_class_prevalence_change=0.005,
 ):
-    """Create an audited revision without replacing existing data or models."""
     started = time.perf_counter()
     if (
         not 0 <= max_relocated_fraction <= 1

@@ -1,5 +1,3 @@
-"""Map UNSW and CICIDS columns to the shared feature schema."""
-
 from __future__ import annotations
 
 import argparse
@@ -139,7 +137,7 @@ def generate_raw_common_feature_datasets(
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Map UNSW and CICIDS columns to the shared feature schema.')
     parser.add_argument("--split-root", type=Path, default=ROOT / "data/splits_v2")
     parser.add_argument(
         "--output-root", type=Path, default=ROOT / "data/features/common_raw2"

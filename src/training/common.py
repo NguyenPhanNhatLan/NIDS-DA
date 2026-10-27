@@ -1,5 +1,3 @@
-"""Training helpers shared by source-only, adaptation, and diagnostics."""
-
 import random
 
 import numpy as np
@@ -16,7 +14,6 @@ def set_seed(seed):
 
 
 def balanced_cross_entropy(counts, device):
-    """Weight Normal and Attack inversely to their source-training counts."""
     counts = torch.as_tensor(counts, dtype=torch.float32)
     if (counts == 0).any():
         raise ValueError("Training data must contain both classes.")
@@ -25,14 +22,12 @@ def balanced_cross_entropy(counts, device):
 
 
 def freeze_bn_stats(model):
-    """Keep source BatchNorm statistics fixed while adapting model weights."""
     for module in model.modules():
         if isinstance(module, nn.modules.batchnorm._BatchNorm):
             module.eval()
 
 
 def weighted_gradient_norm(term, parameters):
-    """Measure a weighted loss gradient without changing accumulated gradients."""
     if not term.requires_grad:
         return 0.0
     gradients = torch.autograd.grad(term, parameters, retain_graph=True, allow_unused=True)

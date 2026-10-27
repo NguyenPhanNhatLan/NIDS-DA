@@ -19,8 +19,6 @@ RESULT_ROOT = revision_path("result_root", ROOT / "results/proposal_v2")
 METRICS = ("pr_auc", "macro_f1", "recall", "fpr", "roc_auc")
 
 
-
-
 def read_json(path):
     if not path.is_file():
         raise FileNotFoundError(f"Missing proposal result: {path}")

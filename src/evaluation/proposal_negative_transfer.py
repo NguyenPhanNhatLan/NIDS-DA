@@ -1,5 +1,3 @@
-"""Post-training, development-only negative-transfer diagnostics for proposal_v2."""
-
 from __future__ import annotations
 
 import argparse
@@ -811,7 +809,7 @@ def print_summary(result, output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Post-training, development-only negative-transfer diagnostics for proposal_v2.')
     parser.add_argument(
         "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
     )

@@ -1,4 +1,3 @@
-"""Freeze the complete development matrix before any final-test labels are read."""
 from datetime import datetime, timezone
 import json
 from pathlib import Path

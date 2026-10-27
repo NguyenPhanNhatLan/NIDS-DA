@@ -1,5 +1,3 @@
-"""Single-RBF MMD with a detached batch median bandwidth."""
-
 import torch
 
 
@@ -22,7 +20,6 @@ def rbf_kernel(x, y, bandwidth_squared):
 
 
 def kernel_mmd_loss(source_features, target_features, scales):
-    """Shared biased MMD engine, averaging RBF kernels at the requested scales."""
     batch_size = min(len(source_features), len(target_features))
     source_features = source_features[:batch_size]
     target_features = target_features[:batch_size]
@@ -41,5 +38,4 @@ def kernel_mmd_loss(source_features, target_features, scales):
 
 
 def mmd_loss(source_features, target_features):
-    """Single-RBF MMD; retains the public API used by existing experiments."""
     return kernel_mmd_loss(source_features, target_features, (1.0,))

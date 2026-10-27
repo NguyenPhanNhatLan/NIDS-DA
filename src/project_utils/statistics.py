@@ -1,11 +1,8 @@
-"""Seed-level descriptive statistics and Student-t intervals."""
-
 import numpy as np
 from scipy.stats import t as student_t
 
 
 def seed_statistics(values):
-    """Two-sided t interval for the mean across independent run seeds."""
     values = np.asarray(values, dtype=np.float64)
     if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
         raise ValueError("Expected finite seed observations")
@@ -25,4 +22,3 @@ def seed_statistics(values):
         ),
         "ci_method": "student_t_across_seeds",
     }
-

@@ -1,9 +1,3 @@
-"""Canonical-only measurements and tables for thesis sections 4.5.1–4.5.5.
-
-Reuses verified canonical kNN samples and measures pseudo-label quality, BN shift,
-and the actual method-specific alignment gradients without updating any model.
-"""
-
 import argparse
 from collections import defaultdict
 import csv
@@ -138,13 +132,21 @@ def pseudo_rows(probabilities, labels, direction, method, seed, phase, threshold
         pseudo_attack = accepted & (predicted == 1)
         accepted_attack = int(pseudo_attack.sum())
         correct = int(np.sum(pseudo_attack & (labels == 1)))
+        true_normals = len(labels) - true_attacks
+        pseudo_normal = accepted & (predicted == 0)
+        accepted_normal = int(pseudo_normal.sum())
+        correct_normal = int(np.sum(pseudo_normal & (labels == 0)))
         rows.append(dict(direction=direction, method=method, seed=seed, phase=phase,
                          threshold=threshold, is_training_threshold=training_threshold == threshold,
                          sample_rows=len(labels), true_attacks=true_attacks, accepted=int(accepted.sum()),
                          coverage=float(accepted.mean()), accepted_attack=accepted_attack,
                          correct_attack=correct,
                          attack_precision=correct/accepted_attack if accepted_attack else None,
-                         attack_recall=correct/true_attacks))
+                         attack_recall=correct/true_attacks,
+                         true_normals=true_normals, accepted_normal=accepted_normal,
+                         correct_normal=correct_normal,
+                         normal_precision=correct_normal/accepted_normal if accepted_normal else None,
+                         normal_recall=correct_normal/true_normals))
     return rows
 
 
@@ -180,7 +182,6 @@ def measure_bn(model, source_x, target_x, direction, method, seed):
 
 
 def sample_training_rows(directory, rows, seed, include_labels):
-    """Uniform rows from the whole split, randomized before forming batches."""
     files = sorted(directory.glob("*.parquet"))
     total = sum(pq.ParquetFile(path).metadata.num_rows for path in files)
     if total < rows:
@@ -265,35 +266,62 @@ def measure_gradients(model, config, pairs, counts, sampling_seed):
                 mean_cosine=float(np.mean(valid)) if valid else None), rows
 
 
+def build_pseudo_tables(output, pseudo):
+    canonical = [r for r in pseudo if r["method"] == "class_aware_mmd"]
+    attack, normal, populations = [], [], []
+    for direction in DIRECTIONS:
+        population = {(r["sample_rows"], r["true_attacks"]) for r in canonical if r["direction"] == direction}
+        if len(population) != 1:
+            raise ValueError("Pseudo-label audit must use the same full validation population")
+        n, attacks = population.pop()
+        populations.append(f"{DIRECTION_LABELS[direction]}: N={n:,}, true Attack={attacks:,} ({100*attacks/n:.3f}%)")
+        for phase in ("before", "after"):
+            group = [r for r in canonical if r["direction"] == direction and r["phase"] == phase and r["is_training_threshold"]]
+            if sorted(r["seed"] for r in group) != list(SEEDS) or len({r["threshold"] for r in group}) != 1:
+                raise ValueError("Require five seeds at the configured training confidence")
+            base = {"Direction": DIRECTION_LABELS[direction], "Model stage": phase.title(),
+                    "Threshold": f"{group[0]['threshold']:.2f}",
+                    "Coverage (%)": cell([r["coverage"] for r in group], 2, 100)}
+            attack.append({**base,
+                "Accepted pseudo-Attack (mean/seed)": cell([r["accepted_attack"] for r in group], 1),
+                "Attack precision (%)": cell([r["attack_precision"] for r in group], 2, 100),
+                "Attack recall (%)": cell([r["attack_recall"] for r in group], 2, 100)})
+            normal.append({**base,
+                "Accepted pseudo-Normal (mean/seed)": cell([r["accepted_normal"] for r in group], 1),
+                "Normal precision (%)": cell([r["normal_precision"] for r in group], 2, 100),
+                "Normal recall (%)": cell([r["normal_recall"] for r in group], 2, 100)})
+    write_csv(output/"table2_pseudo_labels_training_threshold.csv", attack)
+    write_csv(output/"appendix_pseudo_normal_training_threshold.csv", normal)
+    normal_fields = ("direction", "method", "seed", "phase", "threshold", "is_training_threshold",
+                     "sample_rows", "true_normals", "accepted_normal", "correct_normal", "normal_precision", "normal_recall")
+    write_csv(output/"appendix_pseudo_normal_runs.csv", [{key:r[key] for key in normal_fields} for r in canonical])
+    note = ("Canonical Class-Aware MMD; configured confidence τ=0.80. Post-training audit on FULL target validation, "
+            "fixed saved models in eval mode; not online training label errors. Before: source-only. After: selected model. "
+            "Unweighted mean ± sample SD (ddof=1), seeds 42–46; accepted counts are mean flows PER SEED, not totals. "
+            "Precision and recall are calculated per seed before averaging; undefined precision is excluded with valid n shown. "
+            "Coverage = all accepted / all target rows. Class precision = correct accepted pseudo-class / accepted pseudo-class. "
+            "Class recall = correct accepted pseudo-class / all true members of that class, including rejected rows. "
+            + "; ".join(populations) + ".")
+    return [markdown_table("Table 2 — Target pseudo-label quality at the configured confidence threshold", attack, note),
+            markdown_table("Appendix — Pseudo-Normal quality at the configured confidence threshold", normal, note)]
+
+
 def build_tables(output, knn, pseudo, gradient, bn, composition, threshold):
     sections = []
     table1 = []
     for direction in DIRECTIONS:
         for method in METHOD_CONFIGS:
             row = {"Direction": DIRECTION_LABELS[direction], "Method": METHOD_LABELS[method]}
-            for task, title in (("target_within", "Target"), ("target_to_source", "Cross-domain")):
+            for task, title in (("target_within", "Target"),):
                 for label in ("Normal", "Attack"):
                     group = [r for r in knn if r["direction"] == direction and r["method"] == method and r["task"] == task and r["class_label"] == label]
                     row[f"{title} {label} mixing before → after"] = cell([r["before"] for r in group])+" → "+cell([r["after"] for r in group])
             table1.append(row)
     write_csv(output/"table1_class_structure.csv", table1)
-    sections.append(markdown_table("Table 1 — Class structure", table1,
+    sections.append(markdown_table("Table 1 — Within-target class structure", table1,
         "Mean ± sample SD (ddof=1), five paired training seeds, mixing in [0,1]. Fixed class-balanced validation samples; mixing is the fraction of opposite-class neighbors, not an MMD separation ratio."))
 
-    table2 = []
-    for direction in DIRECTIONS:
-        for phase in ("before", "after"):
-            group = [r for r in pseudo if r["direction"] == direction and r["method"] == "class_aware_mmd" and r["phase"] == phase and r["is_training_threshold"]]
-            table2.append({"Direction": DIRECTION_LABELS[direction], "Method": "Class-Aware MMD",
-                           "Phase": phase, "Training confidence": group[0]["threshold"],
-                           "Coverage (%)": cell([r["coverage"] for r in group], 2, 100),
-                           "Accepted pseudo-Attack (flows/seed)": cell([r["accepted_attack"] for r in group], 1),
-                           "Correct pseudo-Attack (flows/seed)": cell([r["correct_attack"] for r in group], 1),
-                           "Attack precision (%)": cell([r["attack_precision"] for r in group], 2, 100),
-                           "Attack recall (%)": cell([r["attack_recall"] for r in group], 2, 100)})
-    write_csv(output/"table2_pseudo_labels_training_threshold.csv", table2)
-    sections.append(markdown_table("Table 2 — Pseudo-label reliability at training confidence", table2,
-        "Audit on FULL target validation with fixed saved models in eval mode, not errors logged during training. Every value is an unweighted per-seed mean ± sample SD over five seeds; count columns are flows PER SEED, not totals. Precision/recall are averaged per seed, not reconstructed by dividing mean counts. Undefined precision (no accepted pseudo-Attack) is excluded with valid n shown; a defined precision of zero is retained. Marginal MMD/MK-MMD do not train with pseudo-labels and have no training confidence threshold."))
+    sections.extend(build_pseudo_tables(output, pseudo))
 
     table3a = [{"Dataset": r["dataset"], "Split/sample": r["population"], "Direction/role": r["role"],
                 "Normal": r["normal"], "Attack": r["attack"], "Attack (%)": f"{100*r['attack']/(r['normal']+r['attack']):.3f}"} for r in composition]
@@ -442,7 +470,7 @@ def run(args):
                 gradients.append(gradient_run)
                 gradient_batch_rows.extend(dict(direction=direction, method=method, seed=seed, **row) for row in batches)
                 print(f"{direction} {method} seed{seed}: usable gradient batches {summary['valid_batches']}/{summary['attempted_batches']}", flush=True)
-                # Small progress CSVs retain completed measurements if interrupted.
+
                 write_csv(args.output/"appendix_gradient_runs.csv", gradients)
                 write_csv(args.output/"appendix_pseudo_label_runs.csv", pseudo)
     if len(gradients) != 30 or len(thresholds) != 40 or len(bn) != 80 or len(pseudo) != 180:
@@ -507,7 +535,7 @@ def run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Canonical-only measurements and tables for thesis sections 4.5.1–4.5.5.\n\nReuses verified canonical kNN samples and measures pseudo-label quality, BN shift,\nand the actual method-specific alignment gradients without updating any model.\n')
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--knn-root", type=Path, default=ROOT/"results/analysis/latent_knn_balanced_v1")
     parser.add_argument("--k", type=int, default=15)

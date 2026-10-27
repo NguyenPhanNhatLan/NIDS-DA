@@ -1,5 +1,3 @@
-"""Summarize a complete paired-seed development variant without reading test data."""
-
 import argparse
 import json
 from pathlib import Path
@@ -45,7 +43,7 @@ def summarize(config, direction, seeds):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Summarize a complete paired-seed development variant without reading test data.')
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--direction', choices=DIRECTIONS, required=True)
     parser.add_argument('--seeds', type=int, nargs='+', default=list(SEEDS))

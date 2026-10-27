@@ -1,4 +1,3 @@
-"""Class-conditional single/multi-kernel MMD using confident target predictions."""
 import math
 from dataclasses import dataclass
 
@@ -52,7 +51,6 @@ class ClassBatch:
 
 
 def prepare_class_batch(source_labels, target_logits, confidence):
-    """Select pseudo-labels and compute shared masks/eligibility once per batch."""
     labels, accepted = select_pseudo_labels(target_logits, confidence)
     source_masks = tuple(source_labels == label for label in (0, 1))
     target_masks = tuple(accepted & (labels == label) for label in (0, 1))
@@ -114,12 +112,6 @@ def audit_pseudo_labels(model, path, confidence=0.8):
 def class_separation_loss(
     source, source_labels, target, target_logits, confidence, margin, *, batch=None
 ):
-    """Keep opposite-class unit centroids apart in both domains and across domains.
-
-    Margin is a minimum squared Euclidean distance. Target groups use detached
-    confident predictions; skip the batch unless both classes have >= 2 samples
-    in both domains, matching the class-aware MMD eligibility policy.
-    """
     batch = batch if batch is not None else prepare_class_batch(source_labels, target_logits, confidence)
     if not batch.can_align:
         return (source.sum() + target.sum()) * 0.0

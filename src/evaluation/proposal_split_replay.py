@@ -1,4 +1,3 @@
-"""Replay canonical split membership with Spark's native typed xxhash64."""
 import json
 from pathlib import Path
 

@@ -1,5 +1,3 @@
-"""Five post-hoc validation checks for a class-aware development variant."""
-
 import argparse
 import csv
 import json
@@ -198,7 +196,7 @@ def run(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Five post-hoc validation checks for a class-aware development variant.')
     parser.add_argument('--config',type=Path,required=True)
     parser.add_argument('--direction',choices=DIRECTIONS,default='unsw_to_cicids')
     parser.add_argument('--seeds',nargs='+',type=int,default=list(SEEDS))

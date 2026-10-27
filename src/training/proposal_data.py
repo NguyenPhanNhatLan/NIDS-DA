@@ -1,5 +1,3 @@
-"""Small deterministic Parquet batch stream for proposal_v2 training."""
-
 import hashlib
 from pathlib import Path
 
@@ -14,8 +12,6 @@ INPUT_DIM = len(COMMON_FEATURES)
 
 
 def split_sha256(path):
-    """Hash file names and contents in the order used by the batch stream."""
-
     files = sorted(Path(path).glob("*.parquet"))
     if not files:
         raise FileNotFoundError(f"No Parquet files in {path}")
@@ -31,7 +27,6 @@ def split_sha256(path):
 def iter_parquet_batches(
     path, batch_size, shuffle, seed, include_labels, drop_last=False
 ):
-    """Carry partial batches across files; shuffle files and each Arrow batch."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     files = sorted(Path(path).glob("*.parquet"))

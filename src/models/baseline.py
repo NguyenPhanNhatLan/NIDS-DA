@@ -1,5 +1,3 @@
-"""Shared MLP for source-only and domain-adaptation experiments."""
-
 from torch import nn
 from torch.nn import functional as F
 

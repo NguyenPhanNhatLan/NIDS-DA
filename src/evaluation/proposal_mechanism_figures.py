@@ -42,49 +42,42 @@ def method_handles():
 
 
 def plot_knn(rows, manifest, output):
-    figure, axes = plt.subplots(2, 4, figsize=(14.4, 8.5), sharex="col", sharey="col")
-    columns = [(task, label) for task in ("target_within", "target_to_source") for label in ("Normal", "Attack")]
+    figure, axes = plt.subplots(2, 2, figsize=(8.8, 8.5), sharex=True, sharey=True)
     for row_index, direction in enumerate(DIRECTIONS):
-        for column, (task, label) in enumerate(columns):
+        for column, label in enumerate(("Normal", "Attack")):
             axis = axes[row_index, column]
             axis.plot([0, 1], [0, 1], color="#777777", linestyle="--", linewidth=1)
             for method in METHOD_CONFIGS:
                 group = [r for r in rows if r["direction"] == direction and r["method"] == method
-                         and r["task"] == task and r["class_label"] == label]
+                         and r["task"] == "target_to_source" and r["class_label"] == label]
                 if sorted(int(r["seed"]) for r in group) != list(SEEDS):
                     raise ValueError("Incomplete method–seed matrix in kNN plot")
-                axis.scatter([number(r["before"]) for r in group], [number(r["after"]) for r in group],
-                             color=METHOD_COLORS[method], marker=METHOD_MARKERS[method],
-                             s=35, alpha=0.85, edgecolors="white", linewidths=0.5, zorder=3)
-            limit = 0.15 if task == "target_within" else 1.0
-            if any(number(r[field]) > limit for r in rows if r["task"] == task for field in ("before", "after")):
-                raise ValueError("kNN point exceeds the declared panel scale")
-            margin = .02*limit
-            axis.set(xlim=(-margin, limit+margin), ylim=(-margin, limit+margin), aspect="equal",
-                     xticks=np.linspace(0, limit, 4 if task == "target_within" else 5),
-                     yticks=np.linspace(0, limit, 4 if task == "target_within" else 5))
+                before = [number(r["before"]) for r in group]
+                after = [number(r["after"]) for r in group]
+                if any(not 0 <= value <= 1 for value in before + after):
+                    raise ValueError("kNN mixing must be in [0, 1]")
+                axis.scatter(before, after, color=METHOD_COLORS[method], marker=METHOD_MARKERS[method],
+                             s=40, alpha=0.85, edgecolors="white", linewidths=0.5, zorder=3)
+            axis.set(xlim=(-.02, 1.02), ylim=(-.02, 1.02), aspect="equal",
+                     xticks=np.linspace(0, 1, 5), yticks=np.linspace(0, 1, 5))
             if row_index == 0:
-                axis.set_title(f"{task}\n{label}", fontsize=10)
+                axis.set_title(label, fontsize=11)
             if column == 0:
                 axis.set_ylabel(f"{DIRECTION_LABELS[direction]}\nMixing after")
             if row_index == 1:
                 axis.set_xlabel("Mixing before")
             finish_axis(axis)
-    figure.suptitle("Class-wise kNN mixing before and after adaptation", fontsize=14)
-    figure.legend(handles=method_handles(), loc="upper center", bbox_to_anchor=(.5, .935), ncol=3, frameon=False)
-    k, per_class = manifest["knn"]["k"], manifest["knn"]["per_class"]
-    figure.text(.5, .022,
-                f"k={k}; {per_class:,} Normal + {per_class:,} Attack per domain, without replacement; fixed validation flows across methods/seeds 42–46.\n"
-                "Euclidean distance in original latent space; self row excluded within domain. Mixing = fraction of opposite-class neighbors.\n"
-                "Each point is one method–seed; below y=x means lower mixing. Within-target axes: 0–0.15; cross-domain axes: 0–1. This is not an MMD separation ratio.",
-                ha="center", fontsize=8.5, color="#444444")
-    figure.subplots_adjust(left=.08, right=.985, bottom=.16, top=.80, hspace=.38, wspace=.30)
+    figure.suptitle("Target-to-source kNN mixing by class", fontsize=14)
+    figure.legend(handles=method_handles(), loc="upper center", bbox_to_anchor=(.5, .935),
+                  ncol=3, frameon=False)
+    figure.subplots_adjust(left=.13, right=.97, bottom=.09, top=.83, hspace=.22, wspace=.20)
     save_png(figure, output, "figure1_knn_mixing")
 
 
 def plot_pseudo_labels(rows, manifest, output):
     figure, axes = plt.subplots(2, 3, figsize=(12.8, 7.5), sharex=True, sharey=True)
-    metrics = [("attack_precision", "Attack precision"), ("attack_recall", "Attack recall"), ("coverage", "Coverage")]
+    metrics = [("attack_precision", "(a) Attack precision"), ("attack_recall", "(b) Attack recall"), ("coverage", "(c) Coverage")]
+    seed_markers = dict(zip(SEEDS, ("o", "v", "^", "D", "x")))
     phases = {"before": ("#5B6770", "--"), "after": (METHOD_COLORS["class_aware_mmd"], "-")}
     levels = manifest["pseudo_labels"]["thresholds"]
     for row_index, direction in enumerate(DIRECTIONS):
@@ -95,7 +88,7 @@ def plot_pseudo_labels(rows, manifest, output):
                 lookup = {(int(r["seed"]), number(r["threshold"])): number(r[metric]) for r in group}
                 for seed in SEEDS:
                     axis.plot(levels, [lookup[seed, level] for level in levels], color=color,
-                              linestyle=style, linewidth=.8, alpha=.3, marker=".", markersize=3)
+                              linestyle=style, linewidth=1, alpha=.5, marker=seed_markers[seed], markersize=4)
                 means = []
                 for level in levels:
                     values = np.array([lookup[seed, level] for seed in SEEDS])
@@ -123,14 +116,13 @@ def plot_pseudo_labels(rows, manifest, output):
     handles = [Line2D([], [], color=color, linestyle=style, linewidth=2.3,
                       marker="o" if phase == "before" else "s", label=f"{phase.title()} · mean over 5 seeds")
                for phase, (color, style) in phases.items()]
-    figure.suptitle("Target pseudo-label reliability · canonical Class-Aware MMD", fontsize=14)
+    figure.suptitle("Target pseudo-label quality across confidence thresholds", fontsize=14)
     figure.legend(handles=handles, loc="upper center", bbox_to_anchor=(.5, .935), ncol=2, frameon=False)
-    figure.text(.5, .025,
-                "Thin lines: individual seeds 42–46; thick lines: unweighted seed means. Before: source-only; After: selected saved model.\n"
-                "Full target-validation audit at fixed models, not online training label errors. Undefined precision (no accepted pseudo-Attack) is omitted.\n"
-                "τ is pseudo-label confidence, distinct from the Attack/Normal decision threshold. Canonical training uses τ=0.80.",
-                ha="center", fontsize=8.5, color="#444444")
-    figure.tight_layout(rect=(0, .12, 1, .88), h_pad=2)
+    seed_handles = [Line2D([], [], color="#666666", linestyle="none", marker=seed_markers[seed],
+                           markersize=4, label=f"Seed {seed}") for seed in SEEDS]
+    figure.legend(handles=seed_handles, loc="upper center", bbox_to_anchor=(.5, .89),
+                  ncol=5, frameon=False, fontsize=8)
+    figure.tight_layout(rect=(0, 0, 1, .83), h_pad=2)
     save_png(figure, output, "figure2_pseudo_label_reliability")
 
 
@@ -166,18 +158,54 @@ def plot_gradient_conflict(rows, manifest, output):
         axis.xaxis.set_major_formatter(PercentFormatter(1))
         finish_axis(axis)
     axes[0].set_ylabel("ΔAP (After − source-only)")
-    figure.suptitle("Classification–alignment gradient conflict and target AP change", fontsize=14)
+    figure.suptitle("Method-specific gradient conflict at selected models", fontsize=14)
     figure.legend(handles=method_handles(), loc="upper center", bbox_to_anchor=(.5, .93), ncol=3, frameon=False)
-    batches = manifest["gradient"]["batches"]
-    size = manifest["gradient"]["batch_size"]
-    figure.text(.5, .025,
-                f"Actual method-specific alignment loss vs class-balanced source CE at the selected saved model; {batches} fixed paired training batches × {size} rows/domain.\n"
-                "Uniform rows from entire source/target training splits; same pairs across methods/seeds. Target-training labels are not read.\n"
-                "Shared encoder gradients; dropout active, BN statistics frozen. Cosine requires two nonzero gradients; skipped/zero-gradient counts are in the appendix.\n"
-                "Each point is one method–seed; sparse class-aware labels show seed and valid-batch count n. This local audit does not establish training dynamics or causality.",
-                ha="center", fontsize=8, color="#444444")
-    figure.tight_layout(rect=(0, .16, 1, .86))
+    figure.tight_layout(rect=(0, 0, 1, .86))
     save_png(figure, output, "figure3_gradient_conflict")
+
+
+def plot_batchnorm_shift(rows, output):
+    methods = ("source_only", *METHOD_CONFIGS)
+    domains = (("source_shift", "Source", "#0072B2", "o", -.16),
+               ("target_shift", "Target", "#D55E00", "^", .16))
+    figure, axes = plt.subplots(2, 2, figsize=(11.6, 8), sharex=True, sharey=True)
+    values = [number(row[key]) for row in rows for key, *_ in domains]
+    if not values or any(not np.isfinite(value) or value <= 0 for value in values):
+        raise ValueError("The logarithmic BN shift figure requires finite positive shifts")
+    jitter = np.linspace(-.055, .055, len(SEEDS))
+    for row_index, direction in enumerate(DIRECTIONS):
+        for column, layer in enumerate(("bn1", "bn2")):
+            axis = axes[row_index, column]
+            for x, method in enumerate(methods):
+                group = sorted((r for r in rows if r["direction"] == direction and
+                                r["method"] == method and r["layer"] == layer), key=lambda r: int(r["seed"]))
+                if [int(r["seed"]) for r in group] != list(SEEDS):
+                    raise ValueError("Incomplete method–seed matrix in BatchNorm audit")
+                for key, _, color, marker, offset in domains:
+                    shifts = np.array([number(r[key]) for r in group])
+                    axis.scatter(x+offset+jitter, shifts, color=color, marker=marker,
+                                 s=24, alpha=.65, linewidths=.4, edgecolors="white", zorder=3)
+                    axis.scatter(x+offset, shifts.mean(), color=color, marker="D", s=62,
+                                 edgecolors="#252525", linewidths=.8, zorder=4)
+            axis.set_yscale("log")
+            axis.set_ylim(min(values)/1.6, max(values)*1.6)
+            axis.set_xlim(-.5, len(methods)-.5)
+            axis.set_xticks(range(len(methods)), [METHOD_LABELS[m].replace("Class-Aware ", "Class-Aware\n") for m in methods])
+            axis.tick_params(axis="x", labelsize=9)
+            if row_index == 0:
+                axis.set_title(f"{layer} · {256 if layer == 'bn1' else 168} channels", fontsize=11)
+            if column == 0:
+                axis.set_ylabel(f"{DIRECTION_LABELS[direction]}\nBN shift (log scale)")
+            finish_axis(axis)
+    handles = [Line2D([], [], color=color, marker=marker, linestyle="none", label=label,
+                      markersize=6) for _, label, color, marker, _ in domains]
+    handles.append(Line2D([], [], color="#252525", marker="D", linestyle="none",
+                          label="Mean over 5 seeds", markersize=6))
+    figure.suptitle("BatchNorm activation shift at selected models", fontsize=14)
+    figure.legend(handles=handles, loc="upper center", bbox_to_anchor=(.5, .94),
+                  ncol=3, frameon=False)
+    figure.tight_layout(rect=(0, 0, 1, .88), h_pad=2, w_pad=2)
+    save_png(figure, output, "figure4_batchnorm_shift")
 
 
 def plot_mechanisms(audit_root, output):
@@ -194,4 +222,5 @@ def plot_mechanisms(audit_root, output):
     plot_knn(read_rows(result_file(audit_root/"knn_runs.csv")), manifest, output)
     plot_pseudo_labels(read_rows(result_file(audit_root/"appendix_pseudo_label_runs.csv")), manifest, output)
     plot_gradient_conflict(read_rows(result_file(audit_root/"appendix_gradient_runs.csv")), manifest, output)
-    print(f"Saved 3 canonical mechanism PNG figures: {output}")
+    plot_batchnorm_shift(read_rows(result_file(audit_root/"appendix_bn_runs.csv")), output)
+    print(f"Saved 4 canonical mechanism PNG figures: {output}")

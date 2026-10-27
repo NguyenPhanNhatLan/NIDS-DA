@@ -1,5 +1,3 @@
-"""Spark session defaults for local development; respect spark-submit settings."""
-
 import os
 from pathlib import Path
 
@@ -9,8 +7,6 @@ from pyspark.sql import SparkSession
 
 
 def get_spark() -> SparkSession:
-
-
     if SparkContext._gateway is None and "PYSPARK_GATEWAY_PORT" not in os.environ:
         bundled_home = Path(pyspark.__file__).resolve().parent
         if (

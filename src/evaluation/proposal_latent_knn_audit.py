@@ -1,4 +1,3 @@
-"""Balanced validation kNN diagnostics in original latent space; no training."""
 import argparse
 import csv
 import json
@@ -61,7 +60,7 @@ def write_csv(path, rows):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Balanced validation kNN diagnostics in original latent space; no training.')
     parser.add_argument('--direction', choices=['both', 'unsw_to_cicids', 'cicids_to_unsw'], default='both')
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 43, 44, 45, 46])
     parser.add_argument('--sampling-seed', type=int, default=42)

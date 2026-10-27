@@ -1,5 +1,3 @@
-"""Names and encodings shared by the thesis figures and tables."""
-
 DIRECTION_LABELS = {"unsw_to_cicids": "UNSW → CICIDS", "cicids_to_unsw": "CICIDS → UNSW"}
 METHOD_LABELS = {
     "source_only": "Source-only", "marginal_mmd": "Marginal MMD",

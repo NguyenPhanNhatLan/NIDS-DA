@@ -1,4 +1,3 @@
-"""Render thesis section 3.2 from a completed Spark manifest, without training."""
 import argparse
 import hashlib
 import json
@@ -64,7 +63,7 @@ Nguồn:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Render thesis section 3.2 from a completed Spark manifest, without training.')
     parser.add_argument('--manifest', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()

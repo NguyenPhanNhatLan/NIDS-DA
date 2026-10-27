@@ -1,4 +1,3 @@
-"""Read-only reconciliation, quality and harmonization audit before freezing data."""
 import json
 from pathlib import Path
 

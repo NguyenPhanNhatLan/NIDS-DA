@@ -1,5 +1,3 @@
-"""Extract bidirectional flows from PCAP files using one fixed CICFlowMeter."""
-
 from __future__ import annotations
 
 import argparse
@@ -85,8 +83,6 @@ def extract_directory(
     executable: str,
     extractor_version: str,
 ):
-
-
     local_cli = Path(sys.executable).parent / executable
     executable_path = (
         shutil.which(str(local_cli))

@@ -1,4 +1,3 @@
-"""Process-level resource observations for data preparation reports."""
 import resource
 import sys
 import time

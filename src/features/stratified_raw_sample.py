@@ -1,4 +1,3 @@
-"""Create exact-size proportional attack-category samples from raw CSVs."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -106,7 +105,7 @@ def sample(path, domain, output, size, seed):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Create exact-size proportional attack-category samples from raw CSVs.')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--rows', type=int, default=500000)
     parser.add_argument('--seed', type=int, default=42)

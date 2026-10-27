@@ -1,5 +1,3 @@
-"""Shared file and experiment helpers; no data or model loading at import time."""
-
 import hashlib
 from pathlib import Path
 

@@ -1,5 +1,3 @@
-"""Select and verify the frozen revision used by training and evaluation."""
-
 import json
 import os
 from pathlib import Path

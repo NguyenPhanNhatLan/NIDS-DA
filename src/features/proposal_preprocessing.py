@@ -1,5 +1,3 @@
-"""Fit and write upstream directional preprocessing with Spark."""
-
 from __future__ import annotations
 
 import argparse
@@ -15,7 +13,6 @@ OUTPUT_ROOT = ROOT / "data/features/proposal_v2"
 
 
 def fit_source_processor(source_train_path, spark=None, relative_error=0.001):
-    """Fit distributed quantile summaries; no source matrix on the driver."""
     from bigdata.preprocess import fit_source_processor as spark_fit
     from spark_session import get_spark
 
@@ -36,7 +33,6 @@ def prepare_direction(
     model_root=None,
     relative_error=0.001,
 ):
-    """Spark fits on source train and transforms every split in executor partitions."""
     from bigdata.preprocess import write_prepared
     from spark_session import get_spark
 
@@ -79,7 +75,7 @@ def prepare_direction(
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Fit and write upstream directional preprocessing with Spark.')
     parser.add_argument(
         "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
     )

@@ -1,5 +1,3 @@
-"""Run the canonical data, development and final-test stages."""
-
 from project_utils.result_files import result_file
 import argparse
 import json
@@ -134,7 +132,6 @@ def train():
 
 
 def resume_train():
-    """Resume missing runs after replay-validating existing checkpoint/result pairs."""
     from evaluation.proposal_final_test import paths, validate_development
     from experiments.proposal_source_only import run as source_only
     from training.proposal_mmd import run as adapted
@@ -204,7 +201,7 @@ def lock_development():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Run the canonical data, development and final-test stages.')
     parser.add_argument(
         "--stage",
         required=True,

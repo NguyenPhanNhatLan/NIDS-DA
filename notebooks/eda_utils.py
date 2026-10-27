@@ -1,5 +1,3 @@
-"""Read-only EDA helpers shared by UNSW and CICIDS notebooks."""
-
 import csv
 import re
 from pathlib import Path
@@ -211,8 +209,8 @@ def bounded_sample(frame, columns, total_rows, max_rows=20_000, seed=42):
     if not columns or total_rows == 0:
         return pd.DataFrame(columns=columns)
     fraction = min(1.0, 1.2 * max_rows / total_rows)
-    # Bernoulli sample with a hard limit BEFORE collection. This is an EDA
-    # sample, not an exact uniform sample for inferential statistics.
+
+
     return (
         frame.select(*columns)
         .sample(False, fraction, seed)
@@ -223,7 +221,6 @@ def bounded_sample(frame, columns, total_rows, max_rows=20_000, seed=42):
 
 
 def category_counts(frame, column, top_n=15):
-    """Full-data grouped counts, capped before driver collection."""
     return (
         frame.groupBy(column)
         .count()

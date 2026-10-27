@@ -1,4 +1,3 @@
-"""Supplemental full-row duplicate and binary-label-conflict audit of ingested raw records."""
 import json
 import tempfile
 import time

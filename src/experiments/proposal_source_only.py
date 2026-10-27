@@ -1,5 +1,3 @@
-"""Source-only MLP baseline on the fixed 5-feature proposal_v2 data."""
-
 import argparse
 import json
 from pathlib import Path
@@ -125,7 +123,7 @@ def run(direction, seed=42, overwrite=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Source-only MLP baseline on the fixed 5-feature proposal_v2 data.')
     parser.add_argument(
         "--direction", required=True, choices=["unsw_to_cicids", "cicids_to_unsw"]
     )

@@ -1,5 +1,3 @@
-"""Audit source-only pseudo-label coverage on target train without reading labels."""
-
 import argparse
 import json
 from pathlib import Path
@@ -69,7 +67,7 @@ def audit(direction, seed, thresholds, device):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Audit source-only pseudo-label coverage on target train without reading labels.')
     parser.add_argument('--directions', nargs='+', choices=DIRECTIONS, default=list(DIRECTIONS))
     parser.add_argument('--seeds', nargs='+', type=int, default=list(SEEDS))
     parser.add_argument('--thresholds', nargs='+', type=float, default=[0.8, 0.85, 0.9, 0.95])

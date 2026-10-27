@@ -28,11 +28,6 @@ DEFAULT_SAMPLE_ROWS = 200_000
 RANDOM_STATE = 42
 
 
-
-
-
-
-
 def parquet_files(directory: Path):
     files = sorted(directory.glob("*.parquet"))
 
@@ -51,15 +46,6 @@ def read_canonical_batches(
     domain: str,
     config,
 ):
-    """
-    Stream one canonicalized batch at a time.
-
-    Important:
-    - unit conversion happens inside canonicalize_frame()
-    - no imputation
-    - NaN remains NaN
-    """
-
     directory = split_root / f"{domain}_train"
 
     raw_columns = source_columns(config, domain) + ["label"]
@@ -84,20 +70,11 @@ def read_canonical_batches(
                 yield canonical
 
 
-
-
-
-
-
 def audit_quality(
     split_root: Path,
     domain: str,
     config,
 ):
-    """
-    Exact streaming statistics over ALL train rows.
-    """
-
     feature_names = [item["canonical_name"] for item in config]
 
     total_rows = 0
@@ -160,11 +137,6 @@ def audit_quality(
     return pd.DataFrame(rows)
 
 
-
-
-
-
-
 def sample_domain(
     split_root: Path,
     domain: str,
@@ -172,14 +144,6 @@ def sample_domain(
     max_rows: int,
     seed: int,
 ):
-    """
-    Create a deterministic random sample without loading
-    the entire dataset into RAM.
-
-    Each batch receives a random key; final sample is drawn
-    from the accumulated capped pool.
-    """
-
     rng = np.random.default_rng(seed)
 
     feature_names = [item["canonical_name"] for item in config]
@@ -236,25 +200,11 @@ def sample_domain(
     return pool
 
 
-
-
-
-
-
 def compute_mutual_information(
     frame: pd.DataFrame,
     feature_names,
     seed: int,
 ):
-    """
-    MI(feature ; label).
-
-    Missing values are median-imputed ONLY for the MI
-    calculation.
-
-    This is a diagnostic, not part of preprocessing.
-    """
-
     rows = []
 
     y = frame["label"].to_numpy(dtype=np.int64)
@@ -311,22 +261,10 @@ def compute_mutual_information(
     return result
 
 
-
-
-
-
-
 def compute_redundancy(
     frame: pd.DataFrame,
     feature_names,
 ):
-    """
-    Pairwise Spearman correlation.
-
-    No imputation:
-    pairwise finite observations only.
-    """
-
     matrix = pd.DataFrame(
         np.nan,
         index=feature_names,
@@ -358,7 +296,6 @@ def compute_redundancy(
                 )
 
             matrix.loc[f1, f2] = rho
-
 
 
     rows = []
@@ -394,22 +331,10 @@ def compute_redundancy(
     return matrix, summary
 
 
-
-
-
-
-
 def robust_standardize(
     source_values,
     target_values,
 ):
-    """
-    Fit robust location/scale using SOURCE ONLY.
-
-    This makes Wasserstein distances more comparable
-    across features.
-    """
-
     source_values = np.asarray(
         source_values,
         dtype=np.float64,
@@ -449,18 +374,6 @@ def compute_domain_shift(
     target_frame,
     feature_names,
 ):
-    """
-    Diagnostic only.
-
-    KS:
-      shape/location distribution difference.
-
-    Wasserstein:
-      distance after SOURCE-fitted robust scaling.
-
-    Do NOT use these metrics as semantic KEEP/DROP rules.
-    """
-
     rows = []
 
     for feature in feature_names:
@@ -524,11 +437,6 @@ def compute_domain_shift(
     return pd.DataFrame(rows)
 
 
-
-
-
-
-
 def audit_direction(
     direction,
     source,
@@ -541,10 +449,6 @@ def audit_direction(
     output_root,
     seed,
 ):
-
-
-
-
     mi = compute_mutual_information(
         source_sample,
         feature_names,
@@ -559,9 +463,6 @@ def audit_direction(
     )
 
 
-
-
-
     (
         corr_matrix,
         redundancy,
@@ -571,17 +472,11 @@ def audit_direction(
     )
 
 
-
-
-
     shift = compute_domain_shift(
         source_sample,
         target_sample,
         feature_names,
     )
-
-
-
 
 
     qs = quality_source.drop(columns=["domain"]).rename(
@@ -639,10 +534,6 @@ def audit_direction(
     ].min(axis=1)
 
 
-
-
-
-
     result["quality_flag_098"] = result["min_finite_rate"] < 0.98
 
     result["low_source_information"] = result["source_mutual_information"] <= 0
@@ -686,11 +577,6 @@ def audit_direction(
     print(f"\nSaved: {summary_path}")
 
     print(f"Saved: {corr_path}")
-
-
-
-
-
 
 
 def main():
@@ -737,9 +623,6 @@ def main():
     print(", ".join(feature_names))
 
 
-
-
-
     print("\nComputing exact UNSW quality...")
 
     quality_unsw = audit_quality(
@@ -779,9 +662,6 @@ def main():
     print(f"Saved: {quality_path}")
 
 
-
-
-
     print(f"\nSampling up to " f"{args.sample_rows:,} UNSW rows...")
 
     unsw_sample = sample_domain(
@@ -807,9 +687,6 @@ def main():
     print(f"CICIDS sample rows: " f"{len(cicids_sample):,}")
 
 
-
-
-
     audit_direction(
         direction="unsw_to_cicids",
         source="unsw",
@@ -822,9 +699,6 @@ def main():
         output_root=args.output_root,
         seed=args.seed,
     )
-
-
-
 
 
     audit_direction(

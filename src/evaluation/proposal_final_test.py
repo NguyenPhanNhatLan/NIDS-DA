@@ -1,5 +1,3 @@
-"""Evaluate frozen proposal_v2 MLP checkpoints once on the held-out target test split."""
-
 import argparse
 import json
 from pathlib import Path
@@ -56,7 +54,6 @@ def check_identity(artifact, direction, seed):
 
 
 def validate_development(direction, method, seed=42):
-    """Validate identity/provenance/selection and replay source val; never read target test."""
     revision = verify_revision()
     if direction not in {"unsw_to_cicids", "cicids_to_unsw"}:
         raise ValueError(f"Unknown direction: {direction}")
@@ -74,7 +71,9 @@ def validate_development(direction, method, seed=42):
     for artifact in (checkpoint, development):
         check_identity(artifact, direction, seed)
         if any(artifact.get(key) != value for key, value in revision.items()):
-            raise ValueError('Development checkpoint/result belongs to another frozen revision')
+            raise ValueError(
+                "Development checkpoint/result belongs to another frozen revision"
+            )
     if development["checkpoint"] != str(checkpoint_path):
         raise ValueError("Development result points to another checkpoint")
 
@@ -147,29 +146,41 @@ def validate_development(direction, method, seed=42):
             "Frozen checkpoint no longer reproduces source-val AP/threshold"
         )
 
-    return {'model': model, 'threshold': threshold, 'source_val_ap': float(current_ap),
-            'target': target, 'base': base, 'checkpoint_path': checkpoint_path,
-            'result_path': result_path, 'revision': revision}
+    return {
+        "model": model,
+        "threshold": threshold,
+        "source_val_ap": float(current_ap),
+        "target": target,
+        "base": base,
+        "checkpoint_path": checkpoint_path,
+        "result_path": result_path,
+        "revision": revision,
+    }
 
 
 def run(direction, method, seed=42):
     revision = verify_revision()
     if revision:
         from evaluation.proposal_development_lock import require_development_lock
+
         lock = require_development_lock(revision)
         locked_runs = {
-            (row['direction'], row['method'], row['seed'])
-            for row in lock['matrix']
+            (row["direction"], row["method"], row["seed"]) for row in lock["matrix"]
         }
         if (direction, method, seed) not in locked_runs:
-            raise ValueError('Requested final-test run is not in locked development matrix')
-    output = result_file(OUTPUT_ROOT / method / direction / f'seed{seed}.json')
+            raise ValueError(
+                "Requested final-test run is not in locked development matrix"
+            )
+    output = result_file(OUTPUT_ROOT / method / direction / f"seed{seed}.json")
     if output.exists():
-        raise FileExistsError(f'Final-test result already exists: {output}')
+        raise FileExistsError(f"Final-test result already exists: {output}")
     validated = validate_development(direction, method, seed)
-    model, threshold = validated['model'], validated['threshold']
-    target, base = validated['target'], validated['base']
-    checkpoint_path, result_path = validated['checkpoint_path'], validated['result_path']
+    model, threshold = validated["model"], validated["threshold"]
+    target, base = validated["target"], validated["base"]
+    checkpoint_path, result_path = (
+        validated["checkpoint_path"],
+        validated["result_path"],
+    )
 
     test_path = base / f"{target}_test"
     test_hash = split_sha256(test_path)
@@ -191,7 +202,7 @@ def run(direction, method, seed=42):
         "checkpoint_sha256": sha256(checkpoint_path),
         "development_result": str(result_path),
         "threshold_from_source_val": threshold,
-        "source_val_ap_verified": validated['source_val_ap'],
+        "source_val_ap_verified": validated["source_val_ap"],
         "target_test": compute_metrics(target_y, target_scores, threshold),
     }
     output.parent.mkdir(parents=True, exist_ok=True)

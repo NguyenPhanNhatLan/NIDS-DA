@@ -37,9 +37,6 @@ RESULT_ROOT = (
 COMMON_CONFIG = ROOT / "configs" / "common_features_v2.json"
 
 
-
-
-
 def parquet_files(directory):
     files = sorted(Path(directory).glob("*.parquet"))
 
@@ -47,13 +44,6 @@ def parquet_files(directory):
         raise FileNotFoundError(f"No parquet files in {directory}")
 
     return files
-
-
-
-
-
-
-
 
 
 def sample_features(
@@ -182,9 +172,6 @@ def sample_features(
     return result, total_rows
 
 
-
-
-
 def compute_ks(
     source,
     target,
@@ -213,14 +200,6 @@ def compute_ks(
         }
 
     return results
-
-
-
-
-
-
-
-
 
 
 def compute_input_mmd(
@@ -262,8 +241,6 @@ def compute_input_mmd(
         target_tensor = torch.from_numpy(target[target_index]).float()
 
 
-
-
         with torch.no_grad():
             loss, bandwidth = mmd_loss(
                 source_tensor,
@@ -296,16 +273,6 @@ def compute_input_mmd(
     }
 
 
-
-
-
-
-
-
-
-
-
-
 def compute_domain_auc(
     source,
     target,
@@ -313,9 +280,6 @@ def compute_domain_auc(
     folds=5,
 ):
     return domain_auc_cv(source, target, seed=seed, folds=folds)[0]
-
-
-
 
 
 def run(
@@ -342,8 +306,6 @@ def run(
     print(f"Target train: {target_path}")
 
 
-
-
     source, source_total = sample_features(
         source_path,
         analysis_sample,
@@ -361,12 +323,10 @@ def run(
     print(f"Target rows: " f"{target_total:,} " f"(sample={len(target):,})")
 
 
-
     ks = compute_ks(
         source,
         target,
     )
-
 
 
     mmd = compute_input_mmd(
@@ -378,14 +338,12 @@ def run(
     )
 
 
-
     domain_auc = compute_domain_auc(
         source,
         target,
         seed=seed,
         folds=cv_folds,
     )
-
 
 
     preprocessor_path = (
@@ -437,7 +395,6 @@ def run(
     }
 
 
-
     output = result_file(RESULT_ROOT / f"{direction}_seed{seed}.json")
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -456,7 +413,6 @@ def run(
         )
 
         stream.write("\n")
-
 
 
     print("\nInput MMD²:")
@@ -489,11 +445,7 @@ def run(
     return result
 
 
-
-
-
 def fixed_kernel_mmd(source, target, bandwidth_squared):
-    """Evaluate one fixed kernel, including unequal sample sizes."""
     return (
         rbf_kernel(source, source, bandwidth_squared).mean()
         + rbf_kernel(target, target, bandwidth_squared).mean()
@@ -504,7 +456,6 @@ def fixed_kernel_mmd(source, target, bandwidth_squared):
 def intrinsic_mmd(
     source, target, sample_size=2048, repeats=5, seed=42, alternative_spaces=None
 ):
-
     epsilon = 64 * np.finfo(np.float64).eps
     n = min(sample_size, len(source) // 2, len(target) // 2)
     if n < 2 or repeats < 1:
@@ -583,7 +534,6 @@ def intrinsic_mmd(
 
 
 def domain_auc_cv(source, target, seed=42, folds=5):
-    """Shared full grouped-CV protocol for every domain-classifier diagnostic."""
     if folds < 2:
         raise ValueError("Grouped domain AUC requires at least two folds")
     x = np.concatenate([source, target]).astype(np.float64)
@@ -649,8 +599,6 @@ def run_intrinsic(
     mmd_repeats=5,
     overwrite=False,
 ):
-    """Diagnostic only: canonical raw training samples, shared pooled transform."""
-
     def signed_log1p(x):
         x = np.asarray(x, dtype=np.float64)
         return np.sign(x) * np.log1p(np.abs(x))

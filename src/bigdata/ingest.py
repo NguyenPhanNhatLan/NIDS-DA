@@ -1,5 +1,3 @@
-"""Read headered raw flow CSVs as strings without driver-side data loading."""
-
 import argparse
 import re
 from pyspark.sql import functions as F
@@ -64,7 +62,7 @@ def ingest(spark, inputs, domain):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Read headered raw flow CSVs as strings without driver-side data loading.')
     parser.add_argument("--input", nargs="+", required=True)
     parser.add_argument("--domain", choices=["unsw", "cicids"], required=True)
     parser.add_argument("--output", required=True)

@@ -1,5 +1,3 @@
-"""Select five flow features, standardize units, and retain scalar Spark columns."""
-
 from pyspark.sql import functions as F
 from bigdata.clean import validate_clean
 from bigdata.common import mapping, stage_parser, write_parquet
@@ -21,7 +19,7 @@ def harmonize(frame, domain):
 
 
 def main():
-    args = stage_parser(__doc__).parse_args()
+    args = stage_parser('Select five flow features, standardize units, and retain scalar Spark columns.').parse_args()
     spark = get_spark()
     try:
         write_parquet(

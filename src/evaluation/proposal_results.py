@@ -1,8 +1,3 @@
-"""Read development results shared by table exports and figure generation.
-
-Checks identities and provenance against the frozen revision and development lock.
-"""
-
 import json
 import math
 import os
@@ -180,7 +175,6 @@ def load_alignment_runs(diagnostics_root):
 
 
 def load_score_reports(diagnostics_root, seed):
-    # Reuse the per-run export's checks against the development lock.
     runs, revision, _ = load_alignment_runs(diagnostics_root)
     selections = {(row["direction"], row["method"]): row for row in runs if row["seed"] == seed}
     reports, sources = {}, []
@@ -228,4 +222,3 @@ def load_score_reports(diagnostics_root, seed):
                     if counts != baseline["score_distributions"][label]["count"]:
                         raise ValueError("Before/after diagnostics use different class counts")
     return reports, selections, revision, sources, ap_checks
-

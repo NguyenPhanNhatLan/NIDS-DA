@@ -1,5 +1,3 @@
-"""Multi-kernel MMD using the shared RBF engine."""
-
 from training.adaptation import kernel_mmd_loss
 
 

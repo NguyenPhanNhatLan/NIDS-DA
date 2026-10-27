@@ -1,5 +1,3 @@
-"""Distributed data counts per domain/split/class, separate from ML aggregate."""
-
 import argparse
 from functools import reduce
 from pyspark.sql import functions as F
@@ -30,7 +28,7 @@ def aggregate(frames):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Distributed data counts per domain/split/class, separate from ML aggregate.')
     parser.add_argument("--input-root", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()

@@ -1,5 +1,3 @@
-"""Source-fitted preprocessing for the 5 proposal features."""
-
 from dataclasses import dataclass
 
 import numpy as np

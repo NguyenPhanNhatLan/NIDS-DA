@@ -192,7 +192,6 @@ def evaluate_ap(
 
 
 def evaluate_dataset(dataset, seed=42):
-
     from training.baseline import make_loader
 
     checkpoint_path = PROJECT_DIR / "models" / "baselines" / f"{dataset}_seed{seed}.pt"

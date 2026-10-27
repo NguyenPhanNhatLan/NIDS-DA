@@ -1,5 +1,3 @@
-"""Distributed quality summaries; collect only scalar per-feature statistics."""
-
 import argparse
 from pyspark.sql import functions as F
 from bigdata.common import PROTOCOL, DATA_REVISION, mapping, schema_hash, write_report
@@ -51,7 +49,7 @@ def profile(frame, domain, relative_error=0.001):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Distributed quality summaries; collect only scalar per-feature statistics.')
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--domain", required=True, choices=["unsw", "cicids"])

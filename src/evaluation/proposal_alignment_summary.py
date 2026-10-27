@@ -1,5 +1,3 @@
-"""Export per-seed alignment changes and checkpoint-selection counts from saved JSON."""
-
 import argparse
 from collections import defaultdict
 import csv
@@ -15,7 +13,6 @@ from evaluation.proposal_results import load_alignment_runs as collect_runs
 
 
 def summarize_runs(runs, tolerance=1e-12):
-    """Count changes on unrounded values, allowing only numerical noise as ties."""
     groups = defaultdict(list)
     for row in runs:
         groups[row["direction"], row["method"]].append(row)
@@ -105,7 +102,7 @@ def export(diagnostics_root, output, tolerance=1e-12):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description='Export per-seed alignment changes and checkpoint-selection counts from saved JSON.')
     parser.add_argument(
         "--diagnostics-root",
         type=Path,

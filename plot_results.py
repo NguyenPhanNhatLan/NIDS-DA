@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow running this file directly from a source checkout.
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import matplotlib
@@ -38,7 +38,7 @@ def pr_points(scores):
         raise ValueError("Precision and recall must be finite probabilities")
     if np.any(np.diff(recall) > 1e-12):
         raise ValueError("Saved recall must be in decreasing threshold order")
-    # The diagnostic omits sklearn's final no-prediction endpoint (recall=0, precision=1).
+
     return np.r_[recall, 0.0], np.r_[precision, 1.0]
 
 
@@ -60,7 +60,7 @@ def plot_precision_recall(reports, selections, seed, output):
         baseline = reports[direction, "marginal_mmd"][
             "target_validation_score_analysis"
         ]["before"]
-        # Draw adaptation first so the dashed baseline remains visible on exact ties.
+
         adaptation_lines = []
         for method in METHOD_CONFIGS:
             scores = reports[direction, method]["target_validation_score_analysis"][
@@ -119,16 +119,7 @@ def plot_precision_recall(reports, selections, seed, output):
     figure.suptitle(
         f"Target-validation Precision–Recall curves · seed {seed}", fontsize=14
     )
-    figure.text(
-        0.5,
-        0.025,
-        "One fixed seed; AP comes from the saved score diagnostic and may differ slightly from training-table AP.\n"
-        "Adaptation curves use the checkpoint selected by source-validation AP. No threshold is tuned here.",
-        ha="center",
-        fontsize=9,
-        color="#444444",
-    )
-    figure.tight_layout(rect=(0, 0.10, 1, 0.94))
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
     save_figure(figure, output, f"seed{seed}__target_precision_recall")
 
 
@@ -226,23 +217,73 @@ def plot_score_quantiles(reports, selections, seed, output):
         frameon=False,
         fontsize=9,
     )
-    figure.text(
-        0.5,
-        0.025,
-        "Before: source-only model. After: model selected by source-validation AP.\n"
-        "Dotted line: After decision threshold, selected by Attack-class F1 on source validation separately for each model.\n"
-        "Saved p05, p25, p50, p75 and p95; connecting segments are visual guides, not an ECDF.",
-        ha="center",
-        fontsize=9,
-        color="#444444",
-    )
-    figure.tight_layout(rect=(0, 0.09, 1, 0.88), h_pad=2.2)
+    figure.tight_layout(rect=(0, 0, 1, 0.88), h_pad=2.2)
     save_figure(figure, output, f"seed{seed}__target_attack_score_quantiles")
+
+
+def plot_feature_ecdfs(output):
+    import pyarrow.parquet as pq
+    from features.common_features import COMMON_FEATURES
+    from training.data_revision import revision_path, verify_revision
+
+    verify_revision()
+    common = revision_path("common_root", None)
+    titles = ("Flow duration", "Fwd packets", "Bwd packets", "Fwd bytes", "Bwd bytes")
+    series = []
+    colors = {("unsw", 0): "#0066FF", ("unsw", 1): "#FF7F0E",
+              ("cicids", 0): "#18B7A2", ("cicids", 1): "#A855FF"}
+    for domain, role in (("unsw", "Source"), ("cicids", "Target")):
+        table = pq.read_table(common/f"{domain}_val", columns=[*COMMON_FEATURES, "label"])
+        labels = table["label"].to_numpy()
+        if not np.isin(labels, [0, 1]).all():
+            raise ValueError("Unexpected validation labels")
+        for label, name in ((0, "Benign"), (1, "Attack")):
+            values = [table[feature].to_numpy()[labels == label] for feature in COMMON_FEATURES]
+            series.append((f"{role} {name}", colors[domain, label], values))
+
+
+    figure, axes = plt.subplots(3, 2, figsize=(11, 10), sharey=True)
+    for index, (axis, title) in enumerate(zip(axes.flat, titles)):
+        curves = []
+        for label, color, features in series:
+            raw = features[index]
+            finite = raw[np.isfinite(raw)]
+            if not len(finite):
+                raise ValueError(f"No finite observations: {label}: {title}")
+            logged = np.sign(finite)*np.log1p(np.abs(finite))
+            x, counts = np.unique(logged, return_counts=True)
+            y = np.cumsum(counts)/len(logged)
+            curves.append((label, color, x, y))
+            if len(finite) != len(raw):
+                print(f"{label}, {title}: excluded {len(raw)-len(finite)} nonfinite values")
+        left = min(0., min(x[0] for _, _, x, _ in curves))
+        right = max(x[-1] for _, _, x, _ in curves)
+        for label, color, x, y in curves:
+            axis.step(np.r_[left, x, right], np.r_[0., y, 1.], where="post", color=color,
+                      linewidth=1.5, label=label)
+        axis.set_title(f"({chr(97+index)}) {title}", fontsize=11, fontweight="bold", pad=9)
+        axis.set(xlabel="Signed log1p(feature value)", ylabel="ECDF", ylim=(0, 1.01),
+                 yticks=np.linspace(0, 1, 6))
+        axis.tick_params(labelsize=9, labelleft=True)
+        axis.set_facecolor("#F7F9FC")
+        axis.grid(color="#E1E7EF", linewidth=.7)
+        axis.set_axisbelow(True)
+        axis.spines[["top", "right"]].set_visible(False)
+        axis.spines[["left", "bottom"]].set_color("#B9C5D5")
+        axis.margins(x=.02)
+    axes[2, 1].axis("off")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    axes[2, 1].legend(handles, labels, loc="center", frameon=False,
+                      fontsize=11, handlelength=2.8, labelspacing=.65)
+    figure.tight_layout(pad=1.5, h_pad=2, w_pad=2)
+    output.mkdir(parents=True, exist_ok=True)
+    save_figure(figure, output, "class_stratified_feature_ecdf")
+    print(f"Saved wider feature ECDF: {output/'class_stratified_feature_ecdf.png'}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--section", choices=["scores", "mechanisms"], default="scores")
+    parser.add_argument("--section", choices=["scores", "mechanisms", "ecdf"], default="scores")
     parser.add_argument("--audit-dir", type=Path, default=ROOT / "results/analysis/section_4_5_canonical")
     parser.add_argument("--seed", type=int, choices=SEEDS, default=42)
     parser.add_argument(
@@ -256,6 +297,9 @@ def main():
         help="PNG output directory; defaults to results/images/",
     )
     args = parser.parse_args()
+    if args.section == "ecdf":
+        plot_feature_ecdfs(args.output or ROOT / "results/images")
+        return
     if args.section == "mechanisms":
         from evaluation.proposal_mechanism_figures import plot_mechanisms
         plot_mechanisms(args.audit_dir, args.output or ROOT / "results/images")

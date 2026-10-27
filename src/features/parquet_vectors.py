@@ -1,5 +1,3 @@
-"""Validate and unpack one Arrow batch from legacy or Spark list Parquet."""
-
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -8,7 +6,6 @@ from features.common_features import COMMON_FEATURES
 
 
 def vector_matrix(vectors, context="", allow_nonfinite=False):
-    """Read fixed-size or Spark list vectors without losing sliced Arrow offsets."""
     dimension = len(COMMON_FEATURES)
     vector_type = vectors.type
     if vectors.null_count:

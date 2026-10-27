@@ -16,20 +16,6 @@ OUTPUT = result_file(ROOT / "results" / "feature_mapping" / "feature_mapping_aud
 
 
 def decide_mapping(row):
-    """
-    Decide semantic compatibility.
-
-    KEEP:
-        Strong semantic equivalence.
-
-    CONDITIONAL:
-        Same network concept and direction,
-        but computation/statistic requires verification.
-
-    DROP:
-        Semantic incompatibility.
-    """
-
     if not row["concept_match"]:
         return "DROP"
 
@@ -172,9 +158,6 @@ def main():
         + " | "
         + audit["cicids_reference"].fillna("")
     )
-
-
-
 
 
     columns = [
